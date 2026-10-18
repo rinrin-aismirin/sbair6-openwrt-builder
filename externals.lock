@@ -1,0 +1,15 @@
+# Files the kit takes from the LG6851F tree: the boot image packer and the signing tool. The repository does not
+# state a licence for these, so the kit does not carry them: build/fetch-externals.sh downloads them at the pinned
+# commit and checks every hash below.
+# Format: shell variables (sourced by the build scripts).
+LG6851F_REPO=https://github.com/13179415360/openwrt-mt6990-lg6851f.git
+LG6851F_COMMIT=a40df9a5afb46716dea799acea69f17480df4d82
+
+# "<path in the LG6851F tree> <sha256>"
+LG6851F_FILES="
+scripts/lg6851f_mkbootimg_v2.py e2ea6f2824d6068a823847ec4d6e29178c2d1d6f28028025d611c24945679007
+target/linux/mediatek/image/lg6851f-boot-v2.json ca90c63765a6e65cdb24350acafa8b9a35d5f1b20a91001d7c3909d13f4a4b84
+"
+# MTK signing tool with the MT6990 SDK test keys (Python 3.10 pyc); checked by its git tree id at LG6851F_COMMIT.
+LG6851F_SIGN_TOOL_DIR=lg6851f_sign_tool
+LG6851F_SIGN_TOOL_TREE=4485aa8a97836e3b7b4daa5645411edd96ae2fe0

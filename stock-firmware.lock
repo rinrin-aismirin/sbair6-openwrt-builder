@@ -1,0 +1,13 @@
+# Wi-Fi firmware the kit takes from the Air 6 stock firmware. No licence allows redistributing these files, so the
+# kit does not carry them: `./build.sh pull-fw` reads them from the user's own unit into local/firmware/mt7996/
+# under the names the fork's mt76 patch loads for the MT6990 endpoint. The hashes below were seen on stock firmware
+# 1.01.36, 1.01.46 and 1.01.52 (both slots of two units); other hashes are accepted with a warning.
+# Format: shell variables (sourced by build.sh and build/finish.sh).
+
+# "<path on the stock firmware> <mt76 file name> <sha256>"
+STOCK_WIFI_FW="
+/lib/firmware/WIFI_RAM_CODE_MT7990_1_1.bin mt7996_wm_mt6990.bin 5250d86099461cc216031b60bf1e668ff21661e6216722bebc80d600a96dd45c
+/lib/firmware/WIFI_MT7990_WACPU_RAM_CODE_1_1.bin mt7996_wa_mt6990.bin 6c16f873f26da7621817de3e15d734d20b1d5a0acdeb4ffe92e872053b941e98
+/lib/firmware/WIFI_MT7990_PATCH_MCU_1_1_hdr.bin mt7996_rom_patch_mt6990.bin 6fa4f00f7fa1d7a969eb9a332b81d6e4e8e1474ecd04697ef6e5adb646147707
+/lib/firmware/WIFI_MT7990_PHY_RAM_CODE_1_1.bin mt7996_dsp_mt6990.bin 847bdb3f9b835f1d60e169cd96c7865a6a1c765b8c36b07adf42df0fc44f3a75
+"
