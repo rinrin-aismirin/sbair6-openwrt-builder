@@ -16,10 +16,11 @@
 ## Overview
 
 The SoftBank Air 6 (model A775) is a 5G home router built on a MediaTek MT6990 module, with tri-band Wi-Fi 7 and two
-Ethernet jacks. This kit builds plain OpenWrt for it and installs it next to the stock firmware: the unit has two
-system slots, and OpenWrt goes into the one the stock firmware is not running from. If OpenWrt crashes or cannot be
-reached, the unit normally returns to the stock firmware by itself (see
-[How it works](docs/install.md#how-it-works) for the one case it does not cover).
+Ethernet jacks. This kit builds an OpenWrt SNAPSHOT for it (from OpenWrt's main branch, not a release) and installs
+it next to the stock firmware: the unit has two system slots, and OpenWrt goes into the one the stock firmware is
+not running from. It is a work in progress: the modem is not supported, and everything has only been tested
+briefly on one unit. If OpenWrt crashes or cannot be reached, the unit normally returns to the stock firmware by
+itself (see [How it works](docs/install.md#how-it-works) for the one case it does not cover).
 
 What it is based on:
 
