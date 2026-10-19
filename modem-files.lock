@@ -1,0 +1,165 @@
+# Modem userspace the kit takes from the Air 6 stock firmware for the optional modem support (AIR6_MODEM=1). No
+# licence allows redistributing these files, so the kit does not carry them: `./build.sh pull-modem` reads them
+# from the owner's own unit (or a saved copy of a stock root filesystem) into local/modem/<version>/, and only
+# the owner's image gets them. The modem userspace must come from the same stock version as the modem firmware
+# in the slot OpenWrt runs from; see docs/modem.md.
+# Format: shell variables (sourced by build.sh).
+
+# Paths in the stock root filesystem (links are kept as links).
+STOCK_MODEM_FILES="
+bin/busybox
+bin/nice
+bin/sh
+etc/config/netagent
+etc/default_apn.json
+etc/firmware/catcher_filter.bin
+etc/firmware/catcher_filter_1_Moderate.bin
+etc/firmware/catcher_filter_2_Standard.bin
+etc/firmware/catcher_filter_3_Slim.bin
+etc/firmware/catcher_filter_4_UltraSlim.bin
+etc/firmware/catcher_filter_LowPowerMonitor.bin
+etc/firmware/catcher_filter_PLS_PS_ONLY.bin
+lib/ld-musl-aarch64.so.1
+lib/libc.so
+lib/libgcc_s.so.1
+lib/libstdc++.so.6
+lib/libstdc++.so.6.0.28
+lib/libubox.so.20210516
+lib/libubus.so.20210630
+lib/libuci.so
+usr/bin/atci_service
+usr/bin/atcid
+usr/bin/awk
+usr/bin/ccci_fsd
+usr/bin/ccci_mdinit
+usr/bin/ccci_rpcd_com
+usr/bin/mipc_wan_cli
+usr/bin/mtk_netagent
+usr/bin/nvram_daemon
+usr/lib/libasound.so.2
+usr/lib/libasound.so.2.0.0
+usr/lib/libaudio-ctrl-service-interface.so
+usr/lib/libccci.so
+usr/lib/libcurl.so.4
+usr/lib/libcurl.so.4.8.0
+usr/lib/libdtmf_detect.so
+usr/lib/libfile_op.so
+usr/lib/libgnsshal.so
+usr/lib/libjson-c.so.5
+usr/lib/libjson-c.so.5.1.0
+usr/lib/libknlibc.so
+usr/lib/libmipc_msg.so
+usr/lib/libmtk_audio_mixer_ctrl.so
+usr/lib/libnetagent.so
+usr/lib/libnghttp2.so.14
+usr/lib/libnghttp2.so.14.20.1
+usr/lib/libnvram.so
+usr/lib/libql_at.so
+usr/lib/libql_atcmd.so
+usr/lib/libql_comtools.so
+usr/lib/libql_mipc.so
+usr/lib/libql_peripheral.so
+usr/lib/libql_qlog.so
+usr/lib/libql_slic.so
+usr/lib/libtrm.so
+usr/lib/libwolfssl.so.5.5.3.99a5b54a
+"
+
+# "<modem version> <path> <sha256>" for regular files, as seen on stock firmware 1.01.52 (slot A, V26_4_P54) and an
+# older stock slot (V26_4_P48). Other versions or hashes are accepted with a warning.
+STOCK_MODEM_HASHES="
+V26_4_P48 bin/busybox 95bcc5f4fd4c7383aef94f092c8bceb6ea596daafed0881ffb9063d45b283df1
+V26_4_P48 etc/config/netagent 2f92fa2ff96ca594958f9dbad6e1c4edf4a71d3918ddffbe655c5c3745c2becb
+V26_4_P48 etc/default_apn.json 87af50b4d8973c8b78ce711f18d3c75c3d30e769591d3fe71d0f794746151cdd
+V26_4_P48 etc/firmware/catcher_filter_1_Moderate.bin 3f759ca674847af32efad506de4eafecd29028d34a78fcec9c65f040a5c32097
+V26_4_P48 etc/firmware/catcher_filter_2_Standard.bin b56be789862c1e97bbe90bc621ba903dad16ae8b7d5696df0a9b4e81956e30e1
+V26_4_P48 etc/firmware/catcher_filter_3_Slim.bin 78a462b5da7425ebf5703ef922ccfca659280c2eeabf3d6e056de72f42776b52
+V26_4_P48 etc/firmware/catcher_filter_4_UltraSlim.bin 63bf0fc5caf4a8da24d35956df4e9edc31f2e3385b8b4dc0aaa39c3aa91c616c
+V26_4_P48 etc/firmware/catcher_filter.bin 4d2472d4f9ea39a67b8da65d21cf33041e402c1377c97492612c3850ed0e7754
+V26_4_P48 etc/firmware/catcher_filter_LowPowerMonitor.bin 0671a4a4a578b0afebd05d9c428f41fa4ddff84c592d9c174e010cfb9cd1f28f
+V26_4_P48 etc/firmware/catcher_filter_PLS_PS_ONLY.bin 9ec202c274e94d9e1120e6ed16c74935b75620c2d1265995705ba9f0436d2f8c
+V26_4_P48 lib/libc.so 4bb3307ec4870e28990e402fe345f431ae8edb3b6438c25d06c029670a535319
+V26_4_P48 lib/libgcc_s.so.1 528ea74dae6fb569829886caacf4ff32510a520936d251714142758edfd6624c
+V26_4_P48 lib/libstdc++.so.6.0.28 2d13b77a22ec7c339bdb631992706b35a3cac3af7f8ae6edb3785eb8e12ccf4a
+V26_4_P48 lib/libubox.so.20210516 0505ae378ffaccd036678cebc7d2279f50398fecd9f1dd6b6471400e9e53e312
+V26_4_P48 lib/libubus.so.20210630 6d3d3580df706afed044a647df432960170d8799d9c4ad0062b7d2aa9ff7c52f
+V26_4_P48 lib/libuci.so 5d833dfee53f7080f8adaca0a79368f4f08527c6eeb338ef8e9d29e28a03ab4d
+V26_4_P48 usr/bin/atcid 01911606453fe2192fe55f1f5aae79e6be52f55ea81eb8c3539a0f863bbb6758
+V26_4_P48 usr/bin/atci_service f75005d98a6d9841d453cdb8f903f5a74ec8f84b6ed66f0ab4a191d429ae4ad5
+V26_4_P48 usr/bin/ccci_fsd d7f9490c71919cf5f0dd8153eaf16591808aaec4f096dba83404df0d0daf8254
+V26_4_P48 usr/bin/ccci_mdinit 79505f49805f388982fcf5312d704ee6a38e67ac382b4cb7bd3d61783e3a3055
+V26_4_P48 usr/bin/ccci_rpcd_com 5db61d1c542ef36de722b3aa8ac2fd1d63176498e796dceb3fc111220b47c50f
+V26_4_P48 usr/bin/mipc_wan_cli c991d314396e13c81a21cc295e7b3fe53a212b40d2d7cc5923736f70e972d407
+V26_4_P48 usr/bin/mtk_netagent c9ebc975a4b3a5643e303e73e922b6df243f71334b9416b6af53d39240c8cd52
+V26_4_P48 usr/bin/nvram_daemon b822b7d69d60af917080a4489854375f9789e23e8022f539e45dc7d97ffbfb6c
+V26_4_P48 usr/lib/libasound.so.2.0.0 7e1bc15d9142835c1658a6b90fefe343d4a0494f900e963e4e9935d8db01cf7e
+V26_4_P48 usr/lib/libaudio-ctrl-service-interface.so d6d3018abad100323452fa38e354406bc7561b8ebaa9aa88612f5d19d420a881
+V26_4_P48 usr/lib/libccci.so 6210e89b99d74085c3c4578e70e5b611654589b2af0a16cf01573ba6b6bfeaa0
+V26_4_P48 usr/lib/libcurl.so.4.8.0 96903f39f12d93d0d5e6d8d74c9ce1180ac990acffaf20939568563bb005af37
+V26_4_P48 usr/lib/libdtmf_detect.so b513f8f0836bb456088c545c56b742c526857c7a423a991c80f85f9db0a38d8b
+V26_4_P48 usr/lib/libfile_op.so 03c79a6ef5dd051cac621ab2fa33d2958d3e1cd097b9dccf95d4c9eb3bb52cd4
+V26_4_P48 usr/lib/libgnsshal.so 7f728380e4231c0941c9af758f76f4fd2cd2e48b700cb698859c52ffb5d1f2de
+V26_4_P48 usr/lib/libjson-c.so.5.1.0 6f77e48a34c439391e817925520c23dbddceff383129a4b4bf82d975607f9203
+V26_4_P48 usr/lib/libknlibc.so 8bffc3ce6ddc4882a39d6b9149a42fe6f7f9d9e39b3425cbed9c7df95b3ded75
+V26_4_P48 usr/lib/libmipc_msg.so 4bc645ad090a7ee56618bf1800873343f9dcc73f20efda90bc09ba87146e111b
+V26_4_P48 usr/lib/libmtk_audio_mixer_ctrl.so feea68fb23dad598d371c2b87d8d9e74b7b67646f1f5e7198d8d1a2e6d08a6c2
+V26_4_P48 usr/lib/libnetagent.so 6bfb3d02aadc8f8c62e76a61a9ffb5fadc8c2177f13744b18e44e85c4def4fc4
+V26_4_P48 usr/lib/libnghttp2.so.14.20.1 cbb117a0ccecd749e3984f59c96de8e0ae16bcd48074e6863e6be76e6925681b
+V26_4_P48 usr/lib/libnvram.so 585b57199b8d2c01f3bd85f198dd816002f32c8026d445a73747d30964eb7f4c
+V26_4_P48 usr/lib/libql_atcmd.so 8882ef36ce0608a8fbff47b304a3e3b07d03ba5d6e2acb9c31ab75f2ea5bc19b
+V26_4_P48 usr/lib/libql_at.so 98f1e907f26239a3e0179986eeccb7c542a02828216cf312460eb63fb24b738f
+V26_4_P48 usr/lib/libql_comtools.so e6fa948d56b0fc1402c24d25e28909d7496435042b1492202c8fd0c5cb8615c1
+V26_4_P48 usr/lib/libql_mipc.so 623d3cc8f29d531550b2426cc55415ce4bc922940b0014935d6bd09e86c1869e
+V26_4_P48 usr/lib/libql_peripheral.so 2863d02e244c56656d27986a2f51aa347df7c64cfa31651f675732828a04134b
+V26_4_P48 usr/lib/libql_qlog.so 9e50264765635744dee0c5d5082f144a0c96aa410b1f0f14f07932dc06882ced
+V26_4_P48 usr/lib/libql_slic.so c1618f9d81b448a0a19ba150ffe3fb1c3e317f298c454a9e161fff94046ff9d6
+V26_4_P48 usr/lib/libtrm.so d6954dc2d1a919c4355ca829cd21267c9e50317eacb074cb728933808924ebe9
+V26_4_P48 usr/lib/libwolfssl.so.5.5.3.99a5b54a f0db100fdcc0d2102ca69cc33949350365e436b785d224f4d43e891176380327
+V26_4_P54 bin/busybox e5bb3ecbf6829bd0785d668d80dac0b41712bd84bf787cade9cb2782e2a6bd10
+V26_4_P54 etc/config/netagent 2f92fa2ff96ca594958f9dbad6e1c4edf4a71d3918ddffbe655c5c3745c2becb
+V26_4_P54 etc/default_apn.json 87af50b4d8973c8b78ce711f18d3c75c3d30e769591d3fe71d0f794746151cdd
+V26_4_P54 etc/firmware/catcher_filter_1_Moderate.bin 3f759ca674847af32efad506de4eafecd29028d34a78fcec9c65f040a5c32097
+V26_4_P54 etc/firmware/catcher_filter_2_Standard.bin b56be789862c1e97bbe90bc621ba903dad16ae8b7d5696df0a9b4e81956e30e1
+V26_4_P54 etc/firmware/catcher_filter_3_Slim.bin 78a462b5da7425ebf5703ef922ccfca659280c2eeabf3d6e056de72f42776b52
+V26_4_P54 etc/firmware/catcher_filter_4_UltraSlim.bin 63bf0fc5caf4a8da24d35956df4e9edc31f2e3385b8b4dc0aaa39c3aa91c616c
+V26_4_P54 etc/firmware/catcher_filter.bin 4d2472d4f9ea39a67b8da65d21cf33041e402c1377c97492612c3850ed0e7754
+V26_4_P54 etc/firmware/catcher_filter_LowPowerMonitor.bin 0671a4a4a578b0afebd05d9c428f41fa4ddff84c592d9c174e010cfb9cd1f28f
+V26_4_P54 etc/firmware/catcher_filter_PLS_PS_ONLY.bin 9ec202c274e94d9e1120e6ed16c74935b75620c2d1265995705ba9f0436d2f8c
+V26_4_P54 lib/libc.so 4bb3307ec4870e28990e402fe345f431ae8edb3b6438c25d06c029670a535319
+V26_4_P54 lib/libgcc_s.so.1 528ea74dae6fb569829886caacf4ff32510a520936d251714142758edfd6624c
+V26_4_P54 lib/libstdc++.so.6.0.28 2d13b77a22ec7c339bdb631992706b35a3cac3af7f8ae6edb3785eb8e12ccf4a
+V26_4_P54 lib/libubox.so.20210516 7d1d0990a1c03fc7068d6aebe9706d5afb6d6996de351f3a76f8d1fae11bfdaa
+V26_4_P54 lib/libubus.so.20210630 7535b0c6ee1b27d622f8d51d93d6b6d039bc5f2b032f7fd6db8ba334e39aae3f
+V26_4_P54 lib/libuci.so 010ecb48b5cdd6d89be51120aad3ae3abee33fb57def7938219e713e78005450
+V26_4_P54 usr/bin/atcid fcf599980dfe936b98dd24a0ba95e9a216cca8cc582b91bd9ab69543ce65a145
+V26_4_P54 usr/bin/atci_service 5b359a6a1cf4f90caaa6bc59fca66b7b2e1926755160df5344f59fcd1be67af1
+V26_4_P54 usr/bin/ccci_fsd 0dbde97a59a3e2914a2748444317e0454a5ed6ed74cf0269789dcb3a6945f847
+V26_4_P54 usr/bin/ccci_mdinit 159a38793f530933823d24223f00a1fa42eff0233aa838e6ad00f40b86ffc9ce
+V26_4_P54 usr/bin/ccci_rpcd_com 00963a985acd45aa0186a7b8aeae5db4a240f567f3f2eb4e59e906d86394b66a
+V26_4_P54 usr/bin/mipc_wan_cli 2f6d3098d8c3204715c9f2b30ffad7614747abce7263320d5faf4a2bb35228ba
+V26_4_P54 usr/bin/mtk_netagent 6377fba84a24aadf311e4e09f82270bdd502233d497d0b8a0b52fb80948457db
+V26_4_P54 usr/bin/nvram_daemon 2df26b88975a2f2426fbf2b64ce00a779f58b1151aea8ddcc0c357606b2ca921
+V26_4_P54 usr/lib/libasound.so.2.0.0 9a1caaa7e92c9c2220a2cabc81c6607eca9d70e4103b50fa2ebfadd230c4af56
+V26_4_P54 usr/lib/libaudio-ctrl-service-interface.so adec1aa8531b546932503c18ff5b61a64cbb537fb9a5e0f1186354c891d1f264
+V26_4_P54 usr/lib/libccci.so af63da42c7e2635beb538156d529c7b409408ea0c51440a45a3246030b3dbd50
+V26_4_P54 usr/lib/libcurl.so.4.8.0 3b23bfae364791404ed18d7db6b5ce62aebe3d391dce0b1f07ba13586b2578bf
+V26_4_P54 usr/lib/libdtmf_detect.so a4df3d82686d8319a82d5d0fc3962aeeac5b7a1563e5b6158f497b75c658d9aa
+V26_4_P54 usr/lib/libfile_op.so 2985231700ccc12aef5e5d7cc61a61d86261073a4aed37e3360fd33a4b10effb
+V26_4_P54 usr/lib/libgnsshal.so 00d2774e70f21b034085a5313b72a354be2201c38395948874e86828540acadf
+V26_4_P54 usr/lib/libjson-c.so.5.1.0 88fccda47a3378fa3e483f149872893eb67dc9bf96985e8f611734d5fa47bb66
+V26_4_P54 usr/lib/libknlibc.so 5fc236031bf5092532807be4af4a5d34d3e84a3af021274af7e8ac3acdad0636
+V26_4_P54 usr/lib/libmipc_msg.so bce8d377844de4e875f6f17acb10f2f8286deb782c0bd90eecc3db28b3259c86
+V26_4_P54 usr/lib/libmtk_audio_mixer_ctrl.so f5f4ad9cdf5a0f7cac2a9ce763b865fb0be6b554f000b3d99a429eef301a999b
+V26_4_P54 usr/lib/libnetagent.so f4af5ed132310837bbac227c3d1d618d5fbd79f920137da3785580348c93209f
+V26_4_P54 usr/lib/libnghttp2.so.14.20.1 e51455139dee5cb6c9a99b06f4c7374ec9e5693ccbcf04eb5a776f1bda6285cc
+V26_4_P54 usr/lib/libnvram.so e63ca3cce2071b9984c1bffa7f265a261ef58378be4710e3bda2847f21dfe04c
+V26_4_P54 usr/lib/libql_atcmd.so 5de0ef19588273a94cd6d6f2455fdcc06c6dfd28f9644ce70025b6eb7e3ffdb9
+V26_4_P54 usr/lib/libql_at.so 98f1e907f26239a3e0179986eeccb7c542a02828216cf312460eb63fb24b738f
+V26_4_P54 usr/lib/libql_comtools.so e6fa948d56b0fc1402c24d25e28909d7496435042b1492202c8fd0c5cb8615c1
+V26_4_P54 usr/lib/libql_mipc.so 623d3cc8f29d531550b2426cc55415ce4bc922940b0014935d6bd09e86c1869e
+V26_4_P54 usr/lib/libql_peripheral.so 2863d02e244c56656d27986a2f51aa347df7c64cfa31651f675732828a04134b
+V26_4_P54 usr/lib/libql_qlog.so 9e50264765635744dee0c5d5082f144a0c96aa410b1f0f14f07932dc06882ced
+V26_4_P54 usr/lib/libql_slic.so c1618f9d81b448a0a19ba150ffe3fb1c3e317f298c454a9e161fff94046ff9d6
+V26_4_P54 usr/lib/libtrm.so d7b5285232709e11d0bffc89e06a7f758659cff2c2b7f34d52346d5a6ebb5910
+V26_4_P54 usr/lib/libwolfssl.so.5.5.3.99a5b54a 9b30753a948fdbe7ebf35e263387b77587df655d72aea42cd5f257969bacd8bf
+"

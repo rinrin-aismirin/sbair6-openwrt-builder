@@ -3,6 +3,10 @@
 #   ./build.sh image                  build the Docker image that the build runs in (once)
 #   ./build.sh fetch                  download the OpenWrt fork into openwrt/, at the commit in fork.lock
 #   ./build.sh pull-fw [USER@]DEVICE  copy the Wi-Fi firmware from a unit running the stock firmware (once)
+#   ./build.sh pull-modem [USER@]DEVICE [SLOT] | FILE
+#                                     copy the modem userspace (optional modem support, see docs/modem.md) from
+#                                     a unit running the stock firmware (default: the slot it does not run from)
+#                                     or from a saved stock root filesystem image FILE
 #   ./build.sh start                  start a build in the background and print its build ID (STAMP)
 #   ./build.sh status STAMP           show the progress of a build; the last line says running, done or failed
 #   ./build.sh collect STAMP          copy a finished build to out/STAMP/ and print the image check result
@@ -49,6 +53,58 @@ pull-fw)
 		cp "$TMP$p" "$FW/$n"
 		echo "$FW/$n <- $p"
 	done ;;
+pull-modem)
+	SRC=${2:?usage: ./build.sh pull-modem [USER@]DEVICE [SLOT] | FILE}
+	. ./modem-files.lock
+	FILES=$(echo "$STOCK_MODEM_FILES" | awk NF)
+	TMP=$(mktemp -d) && trap 'rm -rf "$TMP"' EXIT
+	if [ -f "$SRC" ]; then
+		# A saved stock root filesystem (squashfs), for a slot that no longer holds the stock firmware.
+		IMGF=$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")
+		$D run --rm -i --user 0 -v "$IMGF:/img:ro" "$IMG" sh -c '
+			set -e
+			unsquashfs -q -n -no-xattrs -d /x /img lib/upgrade/bootctrl.sh "$@" >&2
+			[ -f /x/lib/upgrade/bootctrl.sh ] || { echo "abort: not a stock root filesystem" >&2; exit 1; }
+			tar -C /x -cf - "$@"' sh $FILES > "$TMP/m.tar"
+		$D run --rm -i --user 0 -v "$IMGF:/img:ro" "$IMG" sh -c '
+			printf "slot=file\nmd1img=\nrootfs=%s\n" \
+				"$(unsquashfs -l /img etc/mddb | grep -o -m1 "MOLY[A-Z0-9_]*_V[0-9]*_[0-9]*_P[0-9]*")"' \
+			> "$TMP/MODEM_VERSION"
+	else
+		SLOT=${3:-}
+		if [ -z "$SLOT" ]; then
+			RUN=$(${AIR6_SSH:-ssh} "$SRC" "sed -n 's/.*bootslot=\([ab]\).*/\1/p' /proc/cmdline")
+			case "$RUN" in a) SLOT=b ;; b) SLOT=a ;; *) echo "cannot read the running slot" >&2; exit 1 ;; esac
+		fi
+		${AIR6_SSH:-ssh} "$SRC" "sh -s $SLOT $(echo $FILES)" < scripts/device/stock_modem_files.sh > "$TMP/m.tar"
+	fi
+	mkdir "$TMP/root"
+	tar -C "$TMP/root" -xf "$TMP/m.tar"
+	if [ -d "$TMP/root/tmp" ]; then
+		mv "$TMP"/root/tmp/air6-pull-modem-ver.*/MODEM_VERSION "$TMP/MODEM_VERSION"
+		rm -r "$TMP/root/tmp"
+	fi
+	VER=$(sed -n 's/^rootfs=.*_\(V[0-9]*_[0-9]*_P[0-9]*\)$/\1/p' "$TMP/MODEM_VERSION")
+	[ -n "$VER" ] || { echo "no modem version found in the stock root filesystem" >&2; exit 1; }
+	MDV=$(sed -n 's/^md1img=.*_\(V[0-9]*_[0-9]*_P[0-9]*\)$/\1/p' "$TMP/MODEM_VERSION")
+	[ -z "$MDV" ] || [ "$MDV" = "$VER" ] ||
+		echo "warning: the slot's modem firmware is $MDV but its root filesystem is $VER" >&2
+	echo "$STOCK_MODEM_HASHES" | grep -q "^$VER " || echo "warning: modem version $VER is not in modem-files.lock" >&2
+	echo "$FILES" | while read -r p; do
+		[ -L "$TMP/root/$p" ] && continue
+		[ -f "$TMP/root/$p" ] || { echo "missing: $p" >&2; exit 1; }
+		h=$(echo "$STOCK_MODEM_HASHES" | awk -v v="$VER" -v p="$p" '$1 == v && $2 == p { print $3 }')
+		got=$(sha256sum < "$TMP/root/$p" | cut -d' ' -f1)
+		[ -z "$h" ] || [ "$h" = "$got" ] || echo "warning: $p has sha256 $got, not the one in modem-files.lock" >&2
+	done
+	OUT=local/modem/$VER
+	rm -rf "$OUT" && mkdir -p "$OUT"
+	cp -a "$TMP/root" "$OUT/root"
+	# The build runs as another user in the container: make the copy readable (no secrets in these files).
+	chmod -R a+rX "$OUT/root"
+	cp "$TMP/MODEM_VERSION" "$OUT/MODEM_VERSION"
+	(cd "$OUT/root" && find . -type f | sort | xargs sha256sum) > "$OUT/SHA256SUMS"
+	echo "$OUT: $(grep -c . "$OUT/SHA256SUMS") files, version $VER"; cat "$OUT/MODEM_VERSION" ;;
 start)
 	[ -z "$(fw_missing)" ] || { echo "Wi-Fi firmware missing in $FW/: run './build.sh pull-fw [USER@]DEVICE' first" >&2; exit 1; }
 	if [ $# -ge 2 ]; then
@@ -88,5 +144,5 @@ logs)
 	ls "out/logs-$STAMP"
 	echo "the last step is in progress.log; its log file is named after the step" ;;
 *)
-	sed -n '2,14p' "$0"; exit 2 ;;
+	sed -n '2,17p' "$0"; exit 2 ;;
 esac

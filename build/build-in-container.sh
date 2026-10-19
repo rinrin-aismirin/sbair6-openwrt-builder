@@ -46,6 +46,8 @@ if [ -f "$K/config/feeds.conf" ]; then cp "$K/config/feeds.conf" feeds.conf; fi
 
 st "config"
 cp "$K/config/air6.diffconfig" .config
+# Owner additions (git-ignored): extra package selections such as the modem packages.
+[ -f "$K/local/diffconfig" ] && cat "$K/local/diffconfig" >> .config
 make defconfig > "$S/defconfig.log" 2>&1
 grep -q '^CONFIG_TARGET_mediatek_mt6990_DEVICE_softbank_air6=y$' .config || { st "device not selected"; exit 1; }
 
