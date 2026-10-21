@@ -50,5 +50,24 @@ kit_dirty=$(git -c safe.directory="$K" -C "$K" status --porcelain 2>/dev/null | 
 		[ -d "$f/.git" ] && echo "feed $(basename "$f"): $(git -C "$f" rev-parse HEAD)"
 	done
 	echo "unsigned inputs: $(basename "$KERNEL") $(basename "$DTB") $(basename "$ROOTFS")"
+	echo "kmod-mt6990-modem: $(grep -q '^CONFIG_PACKAGE_kmod-mt6990-modem=y' "$T/.config" && echo selected || echo not selected)"
+	if [ -n "${AIR6_MODEM:-}" ]; then
+		# The stock modem userspace in this image (not redistributable): version and every file (links by target).
+		echo "modem: AIR6_MODEM=$AIR6_MODEM, $(paste -s -d ' ' "$K/local/modem/$AIR6_MODEM/MODEM_VERSION")"
+		(cd "$T/files/usr/lib/air6-modem/stock" && find . \( -type f -o -type l \) | LC_ALL=C sort |
+			while read -r f; do
+				if [ -L "$f" ]; then echo "link $f -> $(readlink "$f")"; else echo "$(sha256sum < "$f" | cut -d' ' -f1) $f"; fi
+			done) > "$OUT/MODEM_FILES"
+		. "$K/modem-files.lock"
+		v=$(sed -n 's/^rootfs=.*_\(V[0-9]*_[0-9]*_P[0-9]*\)$/\1/p' "$K/local/modem/$AIR6_MODEM/MODEM_VERSION")
+		unknown=$(awk '$1 != "link" { print $2, $1 }' "$OUT/MODEM_FILES" | sed 's|^\./||' | while read -r p h; do
+			echo "$STOCK_MODEM_HASHES" | awk -v v="$v" -v p="$p" -v h="$h" '$1 == v && $2 == p && $3 == h { f = 1 } END { exit !f }' ||
+				echo "$p"
+		done | wc -l)
+		echo "modem files: $(grep -c . "$OUT/MODEM_FILES") (MODEM_FILES), $unknown not in modem-files.lock for $v"
+		cp "$K/local/modem/$AIR6_MODEM/MODEM_VERSION" "$OUT/MODEM_VERSION"
+	else
+		echo "modem: none"
+	fi
 } > "$OUT/PROVENANCE"
 "$K/scripts/check_image.sh" "$OUT" "$X"

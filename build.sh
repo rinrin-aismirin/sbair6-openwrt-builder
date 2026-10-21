@@ -16,6 +16,7 @@
 #   DOCKER_CONTEXT=NAME               use this Docker context (default: the current one; tested with rootless Docker)
 #   AIR6_VOLUME=NAME                  Docker volume for downloads and the build tree (default: air6-kit-work)
 #   AIR6_SSH="ssh -i KEY ..."         ssh command for pull-fw (default: ssh)
+#   AIR6_MODEM=1 | VERSION            start: include the optional modem support with the files from pull-modem
 set -euo pipefail
 cd "$(dirname "$0")"
 D="docker${DOCKER_CONTEXT:+ --context $DOCKER_CONTEXT}"
@@ -114,9 +115,20 @@ start)
 		[ -d "$FORK_DIR/.git" ] || { echo "openwrt/ not found; run './build.sh fetch' first" >&2; exit 1; }
 	fi
 	C=$(git -C "$FORK_DIR" rev-parse --verify "$REF^{commit}")
+	MODEM=
+	if [ -n "${AIR6_MODEM:-}" ]; then
+		if [ "$AIR6_MODEM" = 1 ]; then
+			n=$(ls local/modem 2>/dev/null | wc -l)
+			[ "$n" = 1 ] || { echo "AIR6_MODEM=1 needs exactly one version in local/modem/ (found $n); set AIR6_MODEM=<version>" >&2; exit 1; }
+			MODEM=$(ls local/modem)
+		else
+			MODEM=$AIR6_MODEM
+		fi
+		[ -f "local/modem/$MODEM/MODEM_VERSION" ] || { echo "local/modem/$MODEM not found: run './build.sh pull-modem' first" >&2; exit 1; }
+	fi
 	STAMP=$(date +%Y%m%d-%H%M)-${C:0:8}
 	$D run --rm --user 0 -v "$VOL:/w" "$IMG" chown build:build /w
-	$D run -d --name "air6-kit-$STAMP" -e FORK_COMMIT="$C" -e STAMP="$STAMP" \
+	$D run -d --name "air6-kit-$STAMP" -e FORK_COMMIT="$C" -e STAMP="$STAMP" -e AIR6_MODEM="$MODEM" \
 		-v "$PWD:/kit:ro" -v "$FORK_DIR:/fork:ro" -v "$VOL:/home/build/work" "$IMG" /kit/build/build-in-container.sh >/dev/null
 	echo "$STAMP" ;;
 status)
@@ -144,5 +156,5 @@ logs)
 	ls "out/logs-$STAMP"
 	echo "the last step is in progress.log; its log file is named after the step" ;;
 *)
-	sed -n '2,17p' "$0"; exit 2 ;;
+	sed -n '2,18p' "$0"; exit 2 ;;
 esac

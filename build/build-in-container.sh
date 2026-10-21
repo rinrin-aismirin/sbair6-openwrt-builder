@@ -37,10 +37,26 @@ if [ -d "$K/local/files" ]; then
 	# local files must be world-readable on the host to reach the build user; tighten what dropbear checks
 	[ -d "$T/files/etc/dropbear" ] && chmod 700 "$T/files/etc/dropbear" && chmod 600 "$T/files/etc/dropbear/"*
 fi
+# Optional modem support (AIR6_MODEM=<version>, resolved by build.sh): the owner's pulled stock modem userspace.
+if [ -n "${AIR6_MODEM:-}" ]; then
+	M="$K/local/modem/$AIR6_MODEM"
+	[ -f "$M/MODEM_VERSION" ] || { st "modem files missing: local/modem/$AIR6_MODEM"; exit 1; }
+	mkdir -p "$T/files/usr/lib/air6-modem"
+	cp -a "$M/root" "$T/files/usr/lib/air6-modem/stock"
+	cp "$M/MODEM_VERSION" "$T/files/usr/lib/air6-modem/MODEM_VERSION"
+	(cd "$T/files/usr/lib/air6-modem/stock" && sha256sum -c --quiet "$M/SHA256SUMS") > "$S/modem-files.log" 2>&1 ||
+		{ st "modem files in local/modem/$AIR6_MODEM changed since pull-modem (see modem-files.log)"; exit 1; }
+fi
 
 cd "$T"
 st "feeds"
 if [ -f "$K/config/feeds.conf" ]; then cp "$K/config/feeds.conf" feeds.conf; fi
+# The modem packages run the owner's stock files, so they live in this kit (feed/), not in the fork. Linked in place:
+# the LuCI package versions come from this repository's git history.
+if [ -n "${AIR6_MODEM:-}" ]; then
+	[ -f feeds.conf ] || cp feeds.conf.default feeds.conf
+	echo "src-link air6 $K/feed" >> feeds.conf
+fi
 ./scripts/feeds update -a > "$S/feeds.log" 2>&1
 ./scripts/feeds install -a >> "$S/feeds.log" 2>&1
 
@@ -48,8 +64,13 @@ st "config"
 cp "$K/config/air6.diffconfig" .config
 # Owner additions (git-ignored): extra package selections such as the modem packages.
 [ -f "$K/local/diffconfig" ] && cat "$K/local/diffconfig" >> .config
+# The feed "air6" exists only in this build: keep it out of the unit's apk repository list.
+[ -z "${AIR6_MODEM:-}" ] || printf 'CONFIG_PACKAGE_kmod-mt6990-modem=y\nCONFIG_PACKAGE_air6-modem=y\nCONFIG_PACKAGE_luci-app-air6-modem=y\n# CONFIG_FEED_air6 is not set\n' >> .config
 make defconfig > "$S/defconfig.log" 2>&1
 grep -q '^CONFIG_TARGET_mediatek_mt6990_DEVICE_softbank_air6=y$' .config || { st "device not selected"; exit 1; }
+[ -z "${AIR6_MODEM:-}" ] || grep -q '^CONFIG_PACKAGE_kmod-mt6990-modem=y$' .config || { st "modem kmod not selectable"; exit 1; }
+[ -z "${AIR6_MODEM:-}" ] || grep -q '^CONFIG_PACKAGE_luci-app-air6-modem=y$' .config || { st "modem packages not selectable (feed air6)"; exit 1; }
+[ -z "${AIR6_MODEM:-}" ] || grep -q '^# CONFIG_FEED_air6 is not set$' .config || { st "feed air6 would be listed on the unit"; exit 1; }
 
 st "download"
 make download -j8 > "$S/download.log" 2>&1
