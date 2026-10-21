@@ -1,0 +1,211 @@
+#!/bin/sh
+# rpcd plugin: ubus call air6-modem status '{"ids": false}'
+# Read-only. Identifiers (IMEI, IMSI) are included only with "ids": true.
+
+. /usr/share/libubox/jshn.sh
+
+RUNTIME=/usr/libexec/air6-modem/runtime
+
+at() { $RUNTIME cli 15 --at_cmd "$1" 2>/dev/null | grep -v '^OK$'; }
+
+# error: why, for the "reason" field of the status.
+error_reason() {
+	if [ "$(cat /sys/module/ccci_dpmaif/parameters/stop_fault 2>/dev/null)" = Y ]; then echo reboot-required
+	elif [ -e /var/run/air6-modem.failed ] && ! grep -q '^md1:4' /sys/kernel/ccci/boot 2>/dev/null; then
+		echo modem-start-failed
+	fi
+}
+
+service_state() {
+	[ -n "$(error_reason)" ] && { echo error; return; }
+	[ "$(uci -q get air6-modem.main.enabled)" = 1 ] || { echo disabled; return; }
+	local p
+	for p in /proc/[0-9]*; do
+		[ "$(readlink "$p/root" 2>/dev/null)" = /tmp/air6-modem/root ] && { echo running; return; }
+	done
+	echo stopped
+}
+
+md_state() {
+	case "$(cut -d' ' -f1 /sys/kernel/ccci/boot 2>/dev/null)" in
+		md1:4) echo ready ;; md1:5) echo exception ;; md1:2|md1:3) echo booting ;; *) echo off ;;
+	esac
+}
+
+sim_state() {
+	case "$1" in
+		*"+CPIN: READY"*) echo ready ;;
+		*"SIM PIN"*) echo pin ;;
+		*"SIM PUK"*) echo puk ;;
+		*PH-NET*|*PH-SP*|*PH-CORP*|*PH-SIM*) echo network-locked ;;
+		*"CME ERROR: 10"*) echo absent ;;
+		*"CME ERROR: 14"*) echo busy ;;
+		*) echo unknown ;;
+	esac
+}
+
+reg_state() {
+	case "$1" in
+		1) echo home ;; 5) echo roaming ;; 2) echo searching ;; 3) echo denied ;; *) echo none ;;
+	esac
+}
+
+status() {
+	local ids=$1 svc md cpin map eps nr reg cops plmn act rat csq level ifc dev up
+
+	svc=$(service_state)
+	md=$(md_state)
+	json_init
+	json_add_string service "$svc"
+	[ "$svc" = error ] && json_add_string reason "$(error_reason)"
+	json_add_string md_state "$md"
+	if [ "$svc" = running ] && [ "$md" = ready ] && [ -S /dev/adb_atci_socket ]; then
+		cpin=$(at 'AT+CPIN?')
+		map=$(at 'AT+ESIMMAP?' | sed -n 's/^+ESIMMAP: *\([0-9]\).*/\1/p')
+		json_add_object sim
+		json_add_string slot "$([ "$map" = 2 ] && echo embedded || echo physical)"
+		json_add_string state "$(sim_state "$cpin")"
+		json_close_object
+
+		eps=$(at 'AT+CEREG?' | sed -n 's/^+CEREG: *[0-9]*,\([0-9]*\).*/\1/p')
+		nr=$(at 'AT+C5GREG?' | sed -n 's/^+C5GREG: *[0-9]*,\([0-9]*\).*/\1/p')
+		reg=$eps
+		case "$nr" in 1|5) reg=$nr ;; esac
+		cops=$(at 'AT+COPS?')
+		plmn=$(echo "$cops" | sed -n 's/^+COPS: *[0-9]*,[0-9]*,"\([^"]*\)".*/\1/p')
+		act=$(echo "$cops" | sed -n 's/^+COPS: *[0-9]*,[0-9]*,"[^"]*",\([0-9]*\).*/\1/p')
+		rat=
+		# COPS reports an access technology only together with an operator.
+		[ -n "$plmn" ] && case "$act" in
+			7) rat=lte ;; 10|11|12|13) rat=nr ;; 2|4|5|6) rat=umts ;; 0|1|3) rat=gsm ;;
+		esac
+		json_add_object registration
+		json_add_string state "$(reg_state "$reg")"
+		[ -n "$plmn" ] && json_add_string plmn "$plmn"
+		[ -n "$rat" ] && json_add_string rat "$rat"
+		json_close_object
+
+		csq=$(at 'AT+CSQ' | sed -n 's/^+CSQ: *\([0-9]*\).*/\1/p')
+		level=0
+		if [ -n "$csq" ] && [ "$csq" != 99 ]; then
+			if [ "$csq" -ge 18 ]; then level=3; elif [ "$csq" -ge 13 ]; then level=2; elif [ "$csq" -ge 8 ]; then level=1; fi
+		fi
+		json_add_object signal
+		[ -n "$csq" ] && json_add_int csq "$csq"
+		json_add_int level "$level"
+		json_close_object
+
+		if [ "$ids" = 1 ]; then
+			json_add_object ids
+			json_add_string imei "$(at 'AT+CGSN' | grep -o '[0-9]\{15\}' | head -n 1)"
+			json_add_string imsi "$(at 'AT+CIMI' | grep -o '[0-9]\{14,15\}' | head -n 1)"
+			json_close_object
+		fi
+	fi
+
+	ifc=$(ubus call network.interface dump 2>/dev/null |
+		jsonfilter -e '@.interface[@.proto="air6mipc"].interface' | head -n 1)
+	if [ -n "$ifc" ]; then
+		dev=$(ifstatus "$ifc" | jsonfilter -e '@.l3_device')
+		up=$(ifstatus "$ifc" | jsonfilter -e '@.up')
+		json_add_object data
+		json_add_string interface "$ifc"
+		[ -n "$dev" ] && json_add_string device "$dev"
+		json_add_boolean up "$([ "$up" = true ] && echo 1 || echo 0)"
+		json_close_object
+	fi
+	json_dump
+}
+
+NV=/usr/libexec/air6-modem/nv
+JOBS=/tmp/air6-nv/jobs
+
+valid_id() { case "$1" in "" | *[!0-9a-f-]*) return 1 ;; esac; }
+
+nv_job_status() {
+	local id=$1 st head
+	valid_id "$id" || { echo '{ "error": "unknown job" }'; return; }
+	st=$($NV job-status "$id" 2>&1) || { json_init; json_add_string error "$st"; json_dump; return; }
+	head=$(echo "$st" | sed '/^--$/q')
+	json_init
+	json_add_string job "$id"
+	json_add_string state "$(echo "$head" | sed -n 's/^state=//p' | head -n 1)"
+	json_add_string op "$(echo "$head" | sed -n 's/^op=//p' | head -n 1)"
+	json_add_string sha256 "$(echo "$head" | sed -n 's/^sha256=//p' | head -n 1)"
+	json_add_boolean before "$(echo "$head" | grep -qx 'before=1' && echo 1 || echo 0)"
+	json_add_string log "$(echo "$st" | sed '1,/^--$/d')"
+	json_add_string backup_time "$(uci -q get air6-modem.main.nv_backup_time)"
+	json_dump
+}
+
+# Called by the web interface once the user confirmed that the archive of backup job ID was saved, with the SHA-256
+# the browser computed over what it received. The router's copy is removed then.
+nv_backup_done() {
+	local id=$1 sha=$2 f got
+	valid_id "$id" && [ -d "$JOBS/$id" ] || { echo '{ "error": "unknown job" }'; return; }
+	f=$JOBS/$id/backup.tar.gz
+	grep -qx 'op=backup' "$JOBS/$id/state" && grep -qx 'state=done' "$JOBS/$id/state" && [ -f "$f" ] ||
+		{ echo '{ "error": "no backup archive" }'; return; }
+	got=$(sha256sum < "$f" | cut -d' ' -f1)
+	[ -n "$sha" ] && [ "$sha" = "$got" ] || { echo '{ "error": "checksum mismatch" }'; return; }
+	uci set air6-modem.main.nv_backup_done=1
+	uci set air6-modem.main.nv_backup_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	uci set air6-modem.main.nv_backup_sha256="$got"
+	uci commit air6-modem
+	rm -f "$f"
+	echo '{ "result": "ok" }'
+}
+
+case "$1" in
+list)
+	echo '{ "status": { "ids": false }, "nv_job": { "op": "backup", "source": "", "sha256": "" },'
+	echo '  "nv_job_status": { "job": "" }, "nv_backup_done": { "job": "", "sha256": "" } }'
+	;;
+call)
+	case "$2" in
+	nv_job)
+		read -r input
+		[ -n "$input" ] || input='{}'
+		json_load "$input"
+		json_get_var op op
+		json_get_var src source
+		json_get_var sha sha256
+		case "$op" in backup|check|restore) ;; *) echo '{ "error": "unknown op" }'; exit 0 ;; esac
+		case "$sha" in *[!0-9a-f]*) echo '{ "error": "invalid digest" }'; exit 0 ;; esac
+		[ "$op" != restore ] || valid_id "$src" || { echo '{ "error": "unknown check job" }'; exit 0; }
+		# Early message only; nv checks again under its lock what actually uses the partitions.
+		if [ "$op" != check ] && [ "$(service_state)" = running ]; then
+			echo '{ "error": "stop the modem first" }'; exit 0
+		fi
+		if [ "$op" = restore ]; then out=$($NV job restore "$src" "$sha" 2>&1); else out=$($NV job "$op" 2>&1); fi
+		rc=$?
+		json_init
+		if [ "$rc" = 0 ]; then json_add_string result started; json_add_string job "$out"
+		else json_add_string error "$out"; fi
+		json_dump
+		;;
+	nv_job_status)
+		read -r input
+		[ -n "$input" ] || input='{}'
+		json_load "$input"
+		json_get_var id job
+		nv_job_status "$id"
+		;;
+	nv_backup_done)
+		read -r input
+		[ -n "$input" ] || input='{}'
+		json_load "$input"
+		json_get_var id job
+		json_get_var sha sha256
+		nv_backup_done "$id" "$sha"
+		;;
+	status)
+		read -r input
+		[ -n "$input" ] || input='{}'
+		json_load "$input"
+		json_get_var ids ids
+		status "${ids:-0}"
+		;;
+	esac
+	;;
+esac

@@ -1,0 +1,74 @@
+#!/bin/sh /etc/rc.common
+# SoftBank Air 6 modem service: runs the owner's stock modem daemons (see /usr/libexec/air6-modem/runtime).
+
+START=30
+STOP=90
+USE_PROCD=1
+
+RUNTIME=/usr/libexec/air6-modem/runtime
+ROOT=/tmp/air6-modem/root
+# Left by the start watch when it gave up (see /usr/libexec/air6-modem/watch).
+FAILED=/var/run/air6-modem.failed
+
+daemon() {
+	local name=$1
+	shift
+	procd_open_instance "$name"
+	procd_set_param command /usr/sbin/chroot "$ROOT" "$@"
+	procd_set_param nice -20
+	procd_set_param respawn 3600 5 0
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+start_service() {
+	local enabled backup reason
+	rm -f "$FAILED"
+	config_load air6-modem
+	config_get_bool enabled main enabled 0
+	config_get_bool backup main nv_backup_done 0
+	[ "$enabled" = 1 ] || return 0
+	if [ "$backup" != 1 ]; then
+		logger -t air6-modem "not started: back up the NV partitions first, then set air6-modem.main.nv_backup_done=1"
+		return 1
+	fi
+	reason=$($RUNTIME check) || { logger -t air6-modem "not started: $reason"; return 1; }
+	$RUNTIME setup || { $RUNTIME teardown; logger -t air6-modem "not started: runtime setup failed"; return 1; }
+
+	# Same order as the stock firmware: NVRAM folders (one-shot), file system service, modem start, RPC, then the
+	# AT and data helpers.
+	/usr/sbin/chroot "$ROOT" /usr/bin/nvram_daemon
+	daemon ccci_fsd /usr/bin/ccci_fsd 0 0 100
+	daemon ccci_mdinit /usr/bin/ccci_mdinit 0
+	daemon ccci_rpcd_com /usr/bin/ccci_rpcd_com 0
+	daemon mtk_netagent /usr/bin/mtk_netagent
+	daemon atci_service /usr/bin/atci_service
+	daemon atcid /usr/bin/atcid
+
+	procd_open_instance leds
+	procd_set_param command /usr/libexec/air6-modem/leds run
+	procd_set_param respawn
+	procd_close_instance
+
+	# Restart the modem if it does not become ready (it can fail its start handshake and stay there).
+	procd_open_instance watch
+	procd_set_param command /usr/libexec/air6-modem/watch
+	procd_close_instance
+}
+
+service_stopped() {
+	rm -f "$FAILED"
+	/usr/libexec/air6-modem/leds off
+	$RUNTIME teardown
+}
+
+reload_service() {
+	# Through stop, so that service_stopped() tears the runtime down when the service gets disabled.
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger air6-modem
+}

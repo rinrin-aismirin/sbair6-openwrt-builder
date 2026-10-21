@@ -1,0 +1,10 @@
+{
+	"air6-modem": {
+		"description": "Read the Air 6 modem status",
+		"read": {
+			"ubus": {
+				"air6-modem": [ "status" ]
+			}
+		}
+	}
+}

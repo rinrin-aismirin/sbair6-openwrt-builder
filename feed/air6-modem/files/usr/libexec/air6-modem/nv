@@ -1,0 +1,321 @@
+#!/bin/sh
+# Backup and restore of the NV partitions the modem shares with the stock firmware.
+#
+#   nv create FILE|-        write a backup archive (tar.gz) to FILE, or to stdout with -
+#   nv check FILE           verify an archive against this unit; prints the archive's metadata
+#   nv restore FILE [SHA256]  verify, keep a copy of the current partitions, write the archive's partitions back
+#                           (the copy goes to $NV_BEFORE, default $D/before-restore.tar.gz)
+#   nv uuids                print this unit's identity (ext4 UUIDs of the NV file systems)
+#
+# Archive: META (format, created, unit, partitions), SHA256SUMS and nv/<partition>.img, nothing else. Restoring
+# accepts only archives from this unit (same ext4 UUIDs), with the modem runtime down.
+#
+# Every operation holds the lock the runtime takes to set the modem up (see runtime), so the modem cannot start
+# while partitions are read or written, and checks under that lock that nothing uses the partitions.
+
+FORMAT=air6-nv-backup/1
+PARTS="nvcfg nvdata protect1 protect2 mcf1_a mcf2_a mcf1_b mcf2_b nvram"
+EXT4="nvcfg nvdata protect1 protect2 mcf1_a mcf2_a mcf1_b mcf2_b"
+LOCK=/var/lock/air6-modem.lock
+DETACHED=/var/run/air6-modem.detached
+CHROOT=/tmp/air6-modem/root
+# Private directory for archives the web interface downloads, the pre-restore copy and the background job.
+D=/tmp/air6-nv
+# Where the web interface uploads an archive to check and restore.
+UPLOAD=/tmp/air6-nv-restore.tar.gz
+
+umask 077
+
+die() { echo "$*" >&2; exit 1; }
+
+lock() {
+	[ -n "$NV_LOCKED" ] && return 0
+	exec 9>> "$LOCK" || die "cannot open $LOCK"
+	flock -n 9 || die "the modem service is starting or another NV operation is running"
+	NV_LOCKED=1
+}
+
+private_dir() {
+	[ -L "$D" ] && die "$D is a symbolic link"
+	[ -d "$D" ] || mkdir -m 700 "$D" || die "cannot create $D"
+	[ -n "$(find "$D" -maxdepth 0 -type d -user root -perm 700)" ] || die "$D is not a private directory"
+}
+
+workdir() { mktemp -d /tmp/air6-nv.XXXXXX || die "cannot create a work directory"; }
+
+rm_workdir() {
+	case "$1" in /tmp/air6-nv.??????) rm -rf "$1" ;; esac
+}
+
+part_dev() {
+	local d
+	for d in /sys/block/mmcblk0/mmcblk0p*; do
+		[ "$(sed -n 's/^PARTNAME=//p' "$d/uevent")" = "$1" ] && { echo "/dev/${d##*/}"; return 0; }
+	done
+	return 1
+}
+
+part_size() { echo $(( $(cat "/sys/class/block/${1#/dev/}/size") * 512 )); }
+
+# ext4 superblock at 1024, s_uuid at offset 0x68.
+ext4_uuid() { dd if="$1" bs=1 skip=1128 count=16 2>/dev/null | hexdump -v -e '16/1 "%02x"'; }
+
+uuids() {
+	local p
+	for p in $EXT4; do echo "$p $(ext4_uuid "$(part_dev "$p")")"; done
+}
+
+# Prints why the partitions may be in use; succeeds if they are. Call with the lock held.
+busy() {
+	local p d mm
+	[ -e "$DETACHED" ] && { echo "a modem stop left file systems detached (reboot first)"; return 0; }
+	for p in /proc/[0-9]*; do
+		[ "$(readlink "$p/root" 2>/dev/null)" = "$CHROOT" ] && { echo "modem programs are running (stop the modem service first)"; return 0; }
+	done
+	for p in $PARTS; do
+		d=$(part_dev "$p") || { echo "partition $p not found"; return 0; }
+		mm=$(cat "/sys/class/block/${d#/dev/}/dev")
+		awk -v mm="$mm" '$3 == mm { f = 1 } END { exit !f }' /proc/self/mountinfo &&
+			{ echo "$p is mounted (stop the modem service first)"; return 0; }
+	done
+	return 1
+}
+
+create() {
+	local out=$1 w p d rc=0
+	lock
+	busy >&2 && exit 1
+	w=$(workdir) || exit 1
+	mkdir "$w/nv"
+	for p in $PARTS; do
+		d=$(part_dev "$p") || { echo "partition $p not found" >&2; rc=1; break; }
+		dd if="$d" of="$w/nv/$p.img" bs=1M 2>/dev/null || { echo "reading $p failed" >&2; rc=1; break; }
+	done
+	if [ "$rc" = 0 ]; then
+		(cd "$w" && sha256sum nv/*.img > SHA256SUMS) || rc=1
+		{
+			echo "format=$FORMAT"
+			echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+			echo "image=$(sed -n "s/^DISTRIB_REVISION='\(.*\)'/\1/p" /etc/openwrt_release)"
+			uuids | sed 's/^/uuid_/; s/ /=/'
+		} > "$w/META"
+	fi
+	if [ "$rc" = 0 ]; then
+		if [ "$out" = - ]; then
+			tar -C "$w" -czf - META SHA256SUMS nv || rc=1
+		else
+			# Written privately, then renamed over FILE (a link at FILE is replaced, not followed).
+			tar -C "$w" -czf "$w/archive" META SHA256SUMS nv && mv -f "$w/archive" "$out" || rc=1
+		fi
+	fi
+	rm_workdir "$w"
+	return "$rc"
+}
+
+# List FILE and accept only the members of an archive made by create: regular files META, SHA256SUMS and
+# nv/<partition>.img for every partition (each once, images exactly the partition's size), and the nv/ directory.
+# Links, devices, other names and duplicates are refused before anything is unpacked.
+check_members() {
+	local f=$1 p sizes=
+	for p in $PARTS; do sizes="$sizes $p=$(part_size "$(part_dev "$p")")"; done
+	tar -tvzf "$f" 2>/dev/null | awk -v parts="$PARTS" -v sizes="$sizes" '
+		BEGIN {
+			n = split(parts, P, " ")
+			for (i = 1; i <= n; i++) want["nv/" P[i] ".img"] = 1
+			want["META"] = 1; want["SHA256SUMS"] = 1
+			split(sizes, S, " ")
+			for (i in S) { split(S[i], kv, "="); size["nv/" kv[1] ".img"] = kv[2] }
+		}
+		{
+			name = $0
+			for (i = 1; i <= 5; i++) sub(/^[^ ]+ +/, "", name)
+			type = substr($1, 1, 1)
+			if (name == "nv/" || name == "nv") {
+				if (type != "d" || dirs++) { bad = "unexpected member " name; exit }
+				next
+			}
+			if (!(name in want) || type != "-") { bad = "unexpected member " name; exit }
+			if (seen[name]++) { bad = "duplicate member " name; exit }
+			if (name in size) { if ($3 != size[name]) { bad = name " has the wrong size"; exit } }
+			else if ($3 > 65536) { bad = name " is too large"; exit }
+			lines++
+		}
+		END {
+			if (bad != "") { print bad; exit 1 }
+			if (lines == 0) { print "not an NV backup archive, or damaged"; exit 1 }
+			for (k in want) if (!seen[k]) { print "archive lacks " k; exit 1 }
+		}' >&2
+}
+
+# Unpack FILE into the empty directory $2 and verify it against this unit. Prints META.
+unpack_check() {
+	local f=$1 w=$2 p d want got
+	[ -f "$f" ] && [ ! -L "$f" ] || die "archive not found"
+	check_members "$f" || exit 1
+	tar -C "$w" -xzf "$f" META SHA256SUMS 2>/dev/null || die "not an NV backup archive, or damaged"
+	grep -qx "format=$FORMAT" "$w/META" || die "unknown archive format"
+	awk -v parts="$PARTS" '
+		BEGIN { n = split(parts, P, " "); for (i = 1; i <= n; i++) want["nv/" P[i] ".img"] = 1 }
+		!/^[0-9a-f]+  nv\/[a-z0-9_]+\.img$/ || length($1) != 64 || !($2 in want) || seen[$2]++ { bad = 1 }
+		{ c++ }
+		END { exit (bad || c != n) }' "$w/SHA256SUMS" || die "archive has an invalid checksum list"
+	for p in $EXT4; do
+		want=$(sed -n "s/^uuid_$p=//p" "$w/META")
+		got=$(ext4_uuid "$(part_dev "$p")")
+		[ -n "$want" ] && [ "$want" = "$got" ] || die "archive is from another unit ($p differs)"
+	done
+	tar -C "$w" -xzf "$f" nv 2>/dev/null || die "cannot unpack the partitions"
+	for p in $PARTS; do
+		[ -f "$w/nv/$p.img" ] && [ ! -L "$w/nv/$p.img" ] || die "archive lacks $p"
+		[ "$(wc -c < "$w/nv/$p.img")" = "$(part_size "$(part_dev "$p")")" ] || die "$p has the wrong size"
+		[ "$(sha256sum < "$w/nv/$p.img" | cut -d' ' -f1)" = \
+			"$(sed -n "s|^\([0-9a-f]*\)  nv/$p\.img\$|\1|p" "$w/SHA256SUMS")" ] ||
+			die "archive is damaged ($p checksum mismatch)"
+	done
+	for p in $EXT4; do
+		[ "$(ext4_uuid "$w/nv/$p.img")" = "$(sed -n "s/^uuid_$p=//p" "$w/META")" ] || die "$p image does not match META"
+	done
+	cat "$w/META"
+}
+
+check() {
+	local w rc
+	lock
+	w=$(workdir) || exit 1
+	(unpack_check "$1" "$w"); rc=$?
+	rm_workdir "$w"
+	return $rc
+}
+
+# Restore FILE; with SHA256, only if FILE still has that digest (the archive that was checked and confirmed).
+restore() {
+	local f=$1 sha=$2 w p d rc=0 before
+	lock
+	busy >&2 && exit 1
+	[ -z "$sha" ] || [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$sha" ] || die "the archive changed after it was checked"
+	w=$(workdir) || exit 1
+	(unpack_check "$f" "$w" > /dev/null) || { rm_workdir "$w"; exit 1; }
+	private_dir
+	before=${NV_BEFORE:-$D/before-restore.tar.gz}
+	rm -f "$before"
+	create "$before" || { rm_workdir "$w"; die "could not save the current partitions first"; }
+	echo "before=$before"
+	echo "current partitions saved to $before" >&2
+	for p in $PARTS; do
+		d=$(part_dev "$p")
+		dd if="$w/nv/$p.img" of="$d" bs=1M conv=fsync 2>/dev/null || { echo "writing $p failed" >&2; rc=1; break; }
+		[ "$(sha256sum < "$d" | cut -d' ' -f1)" = "$(sha256sum < "$w/nv/$p.img" | cut -d' ' -f1)" ] ||
+			{ echo "$p does not read back correctly" >&2; rc=1; break; }
+		echo "restored $p" >&2
+	done
+	sync
+	rm_workdir "$w"
+	return $rc
+}
+
+# Background jobs for the web interface (each step takes longer than an rpcd call may), one at a time: a job holds
+# the lock until it ends. Each job has an ID and its own directory $D/jobs/ID with its state, messages and files, so
+# that a client only ever reads the result of the job it started.
+#   nv job backup                  print the ID; the archive goes to $D/jobs/ID/backup.tar.gz
+#   nv job check                   print the ID; takes the uploaded archive into $D/jobs/ID/archive.tar.gz, checks it
+#   nv job restore CHECKID SHA256  print the ID; restores the archive of check job CHECKID if it passed and still
+#                                  has that digest; the pre-restore copy goes to $D/jobs/ID/before-restore.tar.gz
+#   nv job-status ID               state lines (state, op, sha256, before), a line "--", then the job's messages
+valid_id() { case "$1" in "" | *[!0-9a-f-]*) return 1 ;; esac; [ -d "$D/jobs/$1" ]; }
+
+state_of() { sed -n "s/^$2=//p" "$D/jobs/$1/state" 2>/dev/null | head -n 1; }
+
+job() {
+	local op=$1 src=$2 sha=$3 id j file=
+	private_dir
+	lock
+	mkdir -p "$D/jobs"
+	# A backup that succeeds supersedes older ones not confirmed yet, a check that passes older checked
+	# archives (their confirmation or restore then fails); see the worker. Pre-restore copies stay until reboot.
+	# Of the jobs that hold none of these files, the six most recent are kept.
+	ls "$D/jobs" | sort -r | while read -r j; do
+		case "$j" in *[!0-9a-f-]*) continue ;; esac
+		[ -e "$D/jobs/$j/before-restore.tar.gz" ] || [ -e "$D/jobs/$j/backup.tar.gz" ] ||
+			[ -e "$D/jobs/$j/archive.tar.gz" ] || echo "$j"
+	done | sed '1,6d' | while read -r j; do rm -rf "$D/jobs/$j"; done
+	id=$(date +%s)-$(head -c 4 /dev/urandom | hexdump -v -e '4/1 "%02x"')
+	j=$D/jobs/$id
+	mkdir "$j" || die "cannot create the job"
+	case "$op" in
+		backup) file=$j/backup.tar.gz ;;
+		check)
+			[ -f "$UPLOAD" ] && [ ! -L "$UPLOAD" ] || { rm -f "$UPLOAD"; rm -rf "$j"; die "no uploaded archive"; }
+			mv -f "$UPLOAD" "$j/archive.tar.gz" || { rm -rf "$j"; die "cannot take the uploaded archive"; }
+			file=$j/archive.tar.gz
+			sha=$(sha256sum < "$file" | cut -d' ' -f1)
+			;;
+		restore)
+			valid_id "$src" && [ "$(state_of "$src" op)" = check ] && [ "$(state_of "$src" state)" = done ] &&
+				[ -f "$D/jobs/$src/archive.tar.gz" ] || { rm -rf "$j"; die "check an archive first"; }
+			[ -n "$sha" ] && [ "$(state_of "$src" sha256)" = "$sha" ] || { rm -rf "$j"; die "not the archive that was checked"; }
+			file=$D/jobs/$src/archive.tar.gz
+			;;
+		*) rm -rf "$j"; die "unknown job $op" ;;
+	esac
+	printf 'state=running\nop=%s\n' "$op" > "$j/state"
+	: > "$j/log"
+	(
+		# The operation runs in its own subshell so that its exit on failure still reaches the state update.
+		case "$op" in
+			backup) (create "$file") ;;
+			check) (check "$file") ;;
+			restore) (NV_BEFORE=$j/before-restore.tar.gz restore "$file" "$sha") ;;
+		esac > "$j/out" 2> "$j/log"
+		rc=$?
+		{
+			echo "state=$([ "$rc" = 0 ] && echo done || echo failed)"
+			echo "op=$op"
+			case "$op" in
+				backup) [ "$rc" = 0 ] && echo "sha256=$(sha256sum < "$file" | cut -d' ' -f1)" ;;
+				check) [ "$rc" = 0 ] && echo "sha256=$sha" ;;
+				restore) grep -q '^before=' "$j/out" && echo before=1 ;;
+			esac
+		} > "$j/state.new"
+		[ "$op" = check ] && cat "$j/out" >> "$j/log"
+		[ "$op" = restore ] && rm -f "$file"
+		[ "$rc" != 0 ] && [ "$op" != restore ] && rm -f "$file"
+		# Only now that this one succeeded, drop the older files it replaces.
+		if [ "$rc" = 0 ]; then
+			case "$op" in
+				backup) for o in "$D"/jobs/*/backup.tar.gz; do [ "$o" = "$file" ] || rm -f "$o"; done ;;
+				check) for o in "$D"/jobs/*/archive.tar.gz; do [ "$o" = "$file" ] || rm -f "$o"; done ;;
+			esac
+		fi
+		rm -f "$j/out"
+		mv -f "$j/state.new" "$j/state"
+	) < /dev/null > /dev/null 2>&1 &
+	echo $! > "$j/pid"
+	echo "$id"
+}
+
+job_status() {
+	local id=$1 j pid
+	valid_id "$id" || die "unknown job"
+	j=$D/jobs/$id
+	pid=$(cat "$j/pid" 2>/dev/null)
+	if grep -qx 'state=running' "$j/state" && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+		sed 's/^state=running$/state=failed/' "$j/state"
+		echo --
+		cat "$j/log" 2>/dev/null
+		echo "the job ended without a result"
+		return 0
+	fi
+	cat "$j/state"
+	echo --
+	cat "$j/log" 2>/dev/null
+}
+
+case "$1" in
+job) job "$2" "$3" "$4" ;;
+job-status) job_status "$2" ;;
+create) [ -n "$2" ] || die "usage: nv create FILE|-"; create "$2" ;;
+check) check "$2" ;;
+restore) restore "$2" "$3" ;;
+uuids) uuids ;;
+*) echo "usage: $0 create FILE|- | check FILE | restore FILE [SHA256] | uuids | job backup|check | job restore CHECKID SHA256 | job-status ID" >&2; exit 2 ;;
+esac

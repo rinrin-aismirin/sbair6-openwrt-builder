@@ -1,0 +1,49 @@
+{
+	"luci-app-air6-modem": {
+		"description": "Grant access to the Air 6 modem status, NV backup/restore and service settings",
+		"read": {
+			"cgi-io": [
+				"download"
+			],
+			"file": {
+				"/tmp/air6-nv/jobs/*/backup.tar.gz": [
+					"read"
+				],
+				"/tmp/air6-nv/jobs/*/before-restore.tar.gz": [
+					"read"
+				]
+			},
+			"ubus": {
+				"air6-modem": [
+					"status",
+					"nv_job_status"
+				]
+			},
+			"uci": [
+				"air6-modem"
+			]
+		},
+		"write": {
+			"cgi-io": [
+				"upload"
+			],
+			"file": {
+				"/tmp/air6-nv-restore.tar.gz": [
+					"write"
+				]
+			},
+			"ubus": {
+				"air6-modem": [
+					"nv_job",
+					"nv_backup_done"
+				],
+				"system": [
+					"reboot"
+				]
+			},
+			"uci": [
+				"air6-modem"
+			]
+		}
+	}
+}

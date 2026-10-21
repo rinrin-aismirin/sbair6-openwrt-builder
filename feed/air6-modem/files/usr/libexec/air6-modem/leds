@@ -1,0 +1,66 @@
+#!/bin/sh
+# Front panel modem LEDs of the SoftBank Air 6, driven from "ubus call air6-modem status".
+#   leds run     update every INTERVAL seconds until killed (procd instance of the air6-modem service)
+#   leds off     switch the modem LEDs off
+# sim: green = ready, red = absent or locked. mobile: blue = NR, green = LTE, red = not registered.
+# signal-1..3: blue, one per signal level.
+
+. /usr/share/libubox/jshn.sh
+
+INTERVAL=15
+LEDS="green:sim red:sim blue:mobile green:mobile red:mobile blue:signal-1 red:signal-1 blue:signal-2 blue:signal-3"
+
+set_led() {
+	local d=/sys/class/leds/$1 v=0
+	[ -d "$d" ] || return 0
+	[ "$2" = 1 ] && v=$(cat "$d/max_brightness")
+	[ "$(cat "$d/trigger" 2>/dev/null | sed -n 's/.*\[\(.*\)\].*/\1/p')" = none ] || echo none > "$d/trigger"
+	[ "$(cat "$d/brightness")" = "$v" ] || echo "$v" > "$d/brightness"
+}
+
+all_off() {
+	local l
+	for l in $LEDS; do set_led "$l" 0; done
+}
+
+update() {
+	local st service sim reg rat level
+	st=$(ubus -t 30 call air6-modem status 2>/dev/null) || { all_off; return; }
+	json_load "$st"
+	json_get_var service service
+	[ "$service" = running ] || { all_off; return; }
+	sim= reg= rat= level=0
+	json_select sim 2>/dev/null && { json_get_var sim state; json_select ..; }
+	json_select registration 2>/dev/null && { json_get_var reg state; json_get_var rat rat; json_select ..; }
+	json_select signal 2>/dev/null && { json_get_var level level; json_select ..; }
+
+	case "$sim" in
+		ready) set_led green:sim 1; set_led red:sim 0 ;;
+		absent|pin|puk|network-locked) set_led green:sim 0; set_led red:sim 1 ;;
+		*) set_led green:sim 0; set_led red:sim 0 ;;
+	esac
+	case "$reg" in
+		home|roaming)
+			set_led red:mobile 0
+			set_led blue:mobile "$([ "$rat" = nr ] && echo 1 || echo 0)"
+			set_led green:mobile "$([ "$rat" = nr ] && echo 0 || echo 1)" ;;
+		*) set_led blue:mobile 0; set_led green:mobile 0; set_led red:mobile 1 ;;
+	esac
+	set_led red:signal-1 0
+	set_led blue:signal-1 "$([ "${level:-0}" -ge 1 ] && echo 1 || echo 0)"
+	set_led blue:signal-2 "$([ "${level:-0}" -ge 2 ] && echo 1 || echo 0)"
+	set_led blue:signal-3 "$([ "${level:-0}" -ge 3 ] && echo 1 || echo 0)"
+}
+
+case "$1" in
+run)
+	trap 'all_off; exit 0' TERM INT
+	while :; do
+		update
+		sleep "$INTERVAL" &
+		wait $!
+	done
+	;;
+off) all_off ;;
+*) echo "usage: $0 run|off" >&2; exit 2 ;;
+esac

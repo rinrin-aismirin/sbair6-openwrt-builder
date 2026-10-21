@@ -1,0 +1,79 @@
+#!/bin/sh
+# Watch the modem while the service starts it. Runs as a procd instance of the service, so that stopping the service
+# ends it as well. If the modem is not ready within air6-modem.main.ready_timeout seconds (default 90; it is usually
+# ready within 15), restart the modem by ending ccci_mdinit: procd starts it again, and it stops the modem and starts
+# it anew. At most twice; then give up and leave a marker, which the status reports while the modem is not ready.
+
+FAILED=/var/run/air6-modem.failed
+STOP_FAULT=/sys/module/ccci_dpmaif/parameters/stop_fault
+MAX=2
+
+log() { logger -t air6-modem "$*"; }
+ready() { grep -q '^md1:4' /sys/kernel/ccci/boot 2>/dev/null; }
+mdinit_pid() {
+	ubus call service list '{ "name": "air6-modem" }' 2>/dev/null |
+		jsonfilter -e "@['air6-modem'].instances.ccci_mdinit.pid" 2>/dev/null
+}
+
+# End ccci_mdinit $1 and confirm that the restart has begun: procd starts a new ccci_mdinit (after 5 s), and the
+# modem leaves the READY state it may still show from before. Succeeds only when both were seen (within 30 s for the
+# new instance and 15 s more for the modem); a READY seen before that is not taken for the restarted modem.
+restart_modem() {
+	local old=$1 p new= down= j=0
+	kill "$old" 2>/dev/null
+	while [ "$j" -lt 30 ]; do
+		ready || down=1
+		p=$(mdinit_pid)
+		[ -n "$p" ] && [ "$p" != "$old" ] && { new=1; break; }
+		sleep 1
+		j=$((j + 1))
+	done
+	j=0
+	while [ -n "$new" ] && [ -z "$down" ] && [ "$j" -lt 15 ]; do
+		ready || down=1
+		[ -n "$down" ] && break
+		sleep 1
+		j=$((j + 1))
+	done
+	[ -n "$new" ] && { ready || down=1; }
+	[ -n "$new" ] && [ -n "$down" ]
+}
+
+t=$(uci -q get air6-modem.main.ready_timeout)
+case "$t" in "" | *[!0-9]* | 0) t=90 ;; esac
+n=0
+while :; do
+	i=0
+	while ! ready && [ "$i" -lt "$t" ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	# Checked again after the last wait: a modem that became ready meanwhile is not restarted.
+	ready && exit 0
+	if [ "$(cat "$STOP_FAULT" 2>/dev/null)" = Y ]; then
+		log "the modem is not ready, and its data path needs a reboot; not restarting it"
+		exit 0
+	fi
+	state=$(cut -d' ' -f1 /sys/kernel/ccci/boot 2>/dev/null)
+	if [ "$n" -ge "$MAX" ]; then
+		touch "$FAILED"
+		log "the modem is not ready ${t} s after ${MAX} restarts (${state:-no state}); giving up, restart the service by hand"
+		exit 0
+	fi
+	n=$((n + 1))
+	pid=$(mdinit_pid)
+	ready && exit 0
+	if [ -n "$pid" ]; then
+		log "the modem is not ready ${t} s after its start (${state:-no state}); restarting it ($n of $MAX)"
+		if ! restart_modem "$pid"; then
+			# Not a success either way: neither the restart nor the modem's state can be vouched for. The marker is
+			# kept even while the modem shows READY; the status reports it once the modem is not ready.
+			touch "$FAILED"
+			log "the restart of the modem was not confirmed (no new ccci_mdinit or the modem never left READY); not watching further"
+			exit 0
+		fi
+	else
+		# procd starts ccci_mdinit again by itself; this still counts, so that the watch ends.
+		log "the modem is not ready ${t} s after its start (${state:-no state}) and ccci_mdinit is not running ($n of $MAX)"
+	fi
+done

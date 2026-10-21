@@ -1,0 +1,9 @@
+config modem 'main'
+	# Start the stock modem daemons (needs the owner's stock modem files in the image).
+	option enabled '0'
+	# Set to 1 after backing up the NV partitions (they are shared with the stock firmware).
+	option nv_backup_done '0'
+	# Run even if the stock files and the slot's modem firmware differ in version (experiments only).
+	option allow_version_mismatch '0'
+	# SIM slot: auto (the slot if a card is there, else the built-in eSIM), physical or embedded.
+	option sim_slot 'auto'

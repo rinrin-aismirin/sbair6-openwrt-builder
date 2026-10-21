@@ -1,0 +1,235 @@
+#!/bin/sh
+# Runtime for the SoftBank Air 6 modem: the stock modem daemons run in a chroot built from the owner's stock files
+# (/usr/lib/air6-modem/stock, pulled by the image builder), with the shared NV partitions mounted where the stock
+# firmware mounts them.
+#
+#   runtime check      print why the modem cannot start (nothing printed and exit 0: it can)
+#   runtime setup      load the modem drivers, build the chroot, mount the NV partitions
+#   runtime teardown   unmount everything below the runtime directory (daemons must be stopped first)
+#   runtime cli SECONDS ARGS...   run the stock mipc_wan_cli in the chroot with a time limit
+#   runtime sim-select  choose the SIM slot per air6-modem.main.sim_slot (before the radio goes on)
+
+STOCK=/usr/lib/air6-modem/stock
+VERSION_FILE=/usr/lib/air6-modem/MODEM_VERSION
+RUN=/tmp/air6-modem
+ROOT=$RUN/root
+VER_RE='V[0-9]*_[0-9]*_P[0-9]*'
+# Set by the DPMAIF driver when MEDMCU did not confirm a stop: no modem data until the next boot.
+STOP_FAULT=/sys/module/ccci_dpmaif/parameters/stop_fault
+MODULES="mtk-mbox rpmsg_core mtk_rpmsg_mbox mtk_tinysys_ipi ccci_util_lib ccci_md_clk ccci_rtc ccci_auxadc ccmni
+ccci_md_all ccci_ccif ccci_dpmaif medmcu md_tx_power"
+# NV partitions: <partition name> <mount point in the chroot>, as in the stock /etc/fstab.
+NV="nvcfg:nvcfg nvdata:nvdata protect1:protect_f protect2:protect_s mcf1:mdota mcf2:mdota2"
+# Shared with the NV backup/restore tool (nv): held while the runtime is set up, so that the NV partitions are not
+# mounted while they are read or written raw.
+LOCK=/var/lock/air6-modem.lock
+# Left by a teardown that had to detach a mount lazily; nv refuses raw access until the next reboot.
+DETACHED=/var/run/air6-modem.detached
+
+log() { logger -t air6-modem "$*"; echo "$*" >&2; }
+
+slot() { sed -n 's/.*bootslot=\([ab]\).*/\1/p' /proc/cmdline; }
+
+part_dev() {
+	local d
+	for d in /sys/block/mmcblk0/mmcblk0p*; do
+		[ "$(sed -n 's/^PARTNAME=//p' "$d/uevent")" = "$1" ] && { echo "/dev/${d##*/}"; return 0; }
+	done
+	return 1
+}
+
+md_version() {
+	local dev
+	dev=$(part_dev "md1img_$(slot)") || return 1
+	dd if="$dev" bs=4096 count=64 2>/dev/null | grep -a -o -m1 "MOLY[A-Z0-9_]*_$VER_RE" | grep -o "$VER_RE$" | head -n 1
+}
+
+check() {
+	local fs md
+	[ -x "$STOCK/usr/bin/ccci_mdinit" ] || { echo "stock modem files missing (build the image with AIR6_MODEM)"; return 1; }
+	[ "$(cat "$STOP_FAULT" 2>/dev/null)" = Y ] && { echo "an earlier modem stop was not confirmed; reboot to use the modem"; return 1; }
+	fs=$(sed -n "s/^rootfs=.*_\($VER_RE\)$/\1/p" "$VERSION_FILE" 2>/dev/null)
+	md=$(md_version)
+	[ -n "$md" ] || { echo "cannot read the modem firmware version of slot $(slot)"; return 1; }
+	if [ "$fs" != "$md" ] && [ "$(uci -q get air6-modem.main.allow_version_mismatch)" != 1 ]; then
+		echo "stock files are $fs but the modem firmware in slot $(slot) is $md"
+		return 1
+	fi
+	return 0
+}
+
+load_modules() {
+	local m
+	for m in $MODULES; do
+		grep -q "^$(echo "$m" | tr - _) " /proc/modules && continue
+		insmod "$m" || { log "cannot load $m"; return 1; }
+	done
+}
+
+mounted_below() { awk -v k="$RUN/" 'index($2, k) == 1 { print $2 }' /proc/mounts; }
+
+setup() {
+	local m dev n d
+	exec 9>> "$LOCK" && flock -n 9 || { log "an NV backup or restore is running"; return 1; }
+	# Leftovers of an incomplete stop are removed rather than taken for a working runtime.
+	[ -z "$(mounted_below)$(chroot_pids)" ] || teardown_locked || { log "cannot remove the previous runtime"; return 1; }
+	load_modules || return 1
+	mkdir -p "$RUN/rw" "$ROOT"
+	mount -t tmpfs -o mode=0755 tmpfs "$RUN/rw" || return 1
+	mkdir -p "$RUN/rw/up" "$RUN/rw/work"
+	mount -t overlay overlay -o "lowerdir=$STOCK,upperdir=$RUN/rw/up,workdir=$RUN/rw/work" "$ROOT" || return 1
+	mkdir -p "$ROOT/dev" "$ROOT/proc" "$ROOT/sys" "$ROOT/tmp" "$ROOT/data" "$ROOT/var"
+	mount --rbind /dev "$ROOT/dev" && mount -t proc proc "$ROOT/proc" && mount --rbind /sys "$ROOT/sys" &&
+		mount -t tmpfs tmpfs "$ROOT/tmp" && mount -t tmpfs tmpfs "$ROOT/data" || return 1
+	# /dev/block/<partition name> and the slot-less names, as the stock /etc/setup_link.sh makes them.
+	mkdir -p /dev/block
+	for d in /sys/block/mmcblk0/mmcblk0p*; do
+		n=$(sed -n 's/^PARTNAME=//p' "$d/uevent")
+		[ -n "$n" ] && ln -sf "/dev/${d##*/}" "/dev/block/$n"
+	done
+	for n in mcf1 mcf2 connsys_gnss md1img md1dsp spmfw pi_img dpm medmcu sspm mcupm lk tee boot rootfs; do
+		ln -sf "/dev/block/${n}_$(slot)" "/dev/block/$n"
+	done
+	for m in $NV; do
+		dev=/dev/block/${m%%:*}
+		mkdir -p "$ROOT/mnt/vendor/${m#*:}"
+		mount -t ext4 -o noatime "$dev" "$ROOT/mnt/vendor/${m#*:}" || { log "cannot mount $dev"; return 1; }
+	done
+	mkdir -p "$ROOT/mnt/vendor/nvram" "$ROOT/mnt/vendor/nvdata/md_cmn"
+	return 0
+}
+
+chroot_pids() {
+	local p
+	for p in /proc/[0-9]*; do
+		[ "$(readlink "$p/root" 2>/dev/null)" = "$ROOT" ] && echo "${p#/proc/}"
+	done
+}
+
+# Call with the lock held.
+teardown_locked() {
+	local i left pids
+	# Processes still running in the chroot keep the NV file systems busy: ask, then force.
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		pids=$(chroot_pids)
+		[ -n "$pids" ] || break
+		[ "$i" = 1 ] && kill $pids 2>/dev/null
+		[ "$i" = 6 ] && kill -9 $pids 2>/dev/null
+		sleep 1
+	done
+	pids=$(chroot_pids)
+	[ -z "$pids" ] || { log "processes still running in the chroot: $pids"; return 1; }
+	for i in 1 2 3; do
+		mounted_below | awk '{ print length($0), $0 }' | sort -rn | cut -d' ' -f2- |
+		# A lazily detached mount may still be in use: the marker goes up before it, so that NV operations never
+		# see the mount gone without the marker.
+		while read -r m; do umount "$m" 2>/dev/null || { touch "$DETACHED" && umount -l "$m"; }; done
+	done
+	left=$(mounted_below)
+	[ -z "$left" ] || { log "still mounted: $left"; return 1; }
+	return 0
+}
+
+# Teardown under the lock NV operations take. An NV operation holds it only while nothing runs or is mounted
+# below $RUN, so when the lock stays taken there is nothing to tear down.
+teardown() {
+	local i=0
+	exec 9>> "$LOCK" || return 1
+	# BusyBox flock has no timeout option: retry for up to 30 s.
+	until flock -n 9; do
+		if [ "$i" -ge 30 ]; then
+			[ -z "$(mounted_below)$(chroot_pids)" ] && return 0
+			log "cannot take $LOCK to tear the runtime down"
+			return 1
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	teardown_locked
+}
+
+# Exit status: the client's, or 124 when it did not finish in time.
+cli() {
+	local t=$1 p i=0 rc
+	shift
+	chroot "$ROOT" /usr/bin/mipc_wan_cli "$@" > "$RUN/cli.$$" 2>&1 &
+	p=$!
+	while kill -0 "$p" 2>/dev/null && [ "$i" -lt "$t" ]; do sleep 1; i=$((i + 1)); done
+	if kill -0 "$p" 2>/dev/null; then
+		# Bounded cleanup: TERM, then KILL, and never an unbounded wait for a client that does not end.
+		kill "$p" 2>/dev/null
+		i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 3 ]; do sleep 1; i=$((i + 1)); done
+		kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null
+		i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 3 ]; do sleep 1; i=$((i + 1)); done
+		if kill -0 "$p" 2>/dev/null; then log "mipc_wan_cli (pid $p) did not end"; else wait "$p" 2>/dev/null; fi
+		rm -f "$RUN/cli.$$"
+		return 124
+	fi
+	wait "$p"
+	rc=$?
+	grep -v -e '^$' -e '^AT response:' "$RUN/cli.$$" | tr -d '\r'
+	rm -f "$RUN/cli.$$"
+	return $rc
+}
+
+# SIM slot: physical (ESIMMAP 1) or the built-in eSIM (ESIMMAP 2). The modem keeps the last choice, which the stock
+# firmware makes at every boot; uci air6-modem.main.sim_slot = auto (like the stock firmware: the physical slot if
+# a card is there, else the built-in eSIM) | physical | embedded.
+esimmap() { cli 10 --at_cmd 'AT+ESIMMAP?' | sed -n 's/^+ESIMMAP: *\([0-9]\).*/\1/p'; }
+
+esimmap_set() {
+	local i
+	[ "$(esimmap)" = "$1" ] && return 0
+	# The modem refuses the switch with the radio merely off (CFUN=4); EFUN=0 powers the SIM side down as well.
+	cli 15 --at_cmd 'AT+EFUN=0' > /dev/null
+	cli 20 --at_cmd "AT+ESIMMAP=$1" > /dev/null
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+		[ "$(esimmap)" = "$1" ] && return 0
+		sleep 2
+	done
+	log "cannot switch the SIM slot to $1"
+	return 1
+}
+
+# 0: a card is in the slot, 1: no card, 2: could not tell.
+card_present() {
+	local i r absent=0
+	# The SIM side is powered down while the modem is fully off (CFUN=0, e.g. right after the service started) or
+	# after a slot switch (EFUN=0); CFUN=4 powers it with the radio still off. Answers are only trusted when they
+	# stay the same: "not inserted" three times in a row means no card, "busy" means wait.
+	cli 15 --at_cmd 'AT+CFUN=4' > /dev/null
+	for i in $(seq 1 15); do
+		r=$(cli 10 --at_cmd 'AT+CPIN?')
+		case "$r" in
+			*"+CPIN:"*) return 0 ;;
+			*"CME ERROR: 10"*) absent=$((absent + 1)); [ "$absent" -ge 3 ] && return 1 ;;
+			*) absent=0 ;;
+		esac
+		sleep 2
+	done
+	return 2
+}
+
+sim_select() {
+	case "$(uci -q get air6-modem.main.sim_slot)" in
+		physical) esimmap_set 1 ;;
+		embedded) esimmap_set 2 ;;
+		*)
+			esimmap_set 1 || return 1
+			card_present
+			case $? in
+				1) log "no card in the SIM slot, using the built-in eSIM"; esimmap_set 2 ;;
+				2) log "cannot tell whether a card is in the SIM slot, keeping the SIM slot" ;;
+			esac
+			;;
+	esac
+}
+
+case "$1" in
+check) check ;;
+sim-select) sim_select ;;
+setup) check >&2 && setup ;;
+teardown) teardown ;;
+cli) shift; cli "$@" ;;
+*) echo "usage: $0 check|setup|teardown|sim-select|cli SECONDS ARGS..." >&2; exit 2 ;;
+esac

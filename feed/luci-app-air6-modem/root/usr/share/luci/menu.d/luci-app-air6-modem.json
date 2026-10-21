@@ -1,0 +1,13 @@
+{
+	"admin/network/air6-modem": {
+		"title": "Air 6 modem",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "air6-modem/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-air6-modem" ]
+		}
+	}
+}
