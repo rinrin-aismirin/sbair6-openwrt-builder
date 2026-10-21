@@ -1,6 +1,7 @@
 # The OpenWrt fork this kit builds (upstream main + MT6990 platform + mt76 patches + kmod-usb-mtu3 + the
-# Air 6 board). `./build.sh fetch` clones it into openwrt/ (git-ignored) and checks out FORK_COMMIT.
+# Air 6 board + the vendor modem drivers, built only with AIR6_MODEM). `./build.sh fetch` clones it into openwrt/
+# (git-ignored) and checks out FORK_COMMIT.
 # Format: shell variables (sourced by build.sh).
 FORK_REPO=https://github.com/rinrin-aismirin/openwrt.git
 FORK_BRANCH=air6
-FORK_COMMIT=8406013bc1a542c0209e5b88c503be67b045de82
+FORK_COMMIT=60b054581192411f5955dde167940ed25e09c831
