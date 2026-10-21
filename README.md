@@ -18,8 +18,8 @@
 The SoftBank Air 6 (model A775) is a 5G home router built on a MediaTek MT6990 module, with tri-band Wi-Fi 7 and two
 Ethernet jacks. This kit builds an OpenWrt SNAPSHOT for it (from OpenWrt's main branch, not a release) and installs
 it next to the stock firmware: the unit has two system slots, and OpenWrt goes into the one the stock firmware is
-not running from. It is a work in progress: the modem is not supported, and everything has only been tested
-briefly on one unit. If OpenWrt crashes or cannot be reached, the unit normally returns to the stock firmware by
+not running from. It is a work in progress: modem support is optional and experimental, and everything has only
+been tested briefly on one unit. If OpenWrt crashes or cannot be reached, the unit normally returns to the stock firmware by
 itself (see [How it works](docs/install.md#how-it-works) for the one case it does not cover).
 
 What it is based on:
@@ -43,7 +43,8 @@ What works today, in short tests on one unit (hours, not days):
 - the front and jack LEDs
 - returning to the stock firmware automatically when a new image does not come up
 
-What does not work: the 5G/LTE modem (cellular support is not included), and updates that keep your settings.
+What does not work yet: updates that keep your settings. The 5G/LTE modem works only in an optional,
+experimental build ([docs/modem.md](docs/modem.md)).
 Details are in [Status](#status).
 
 ## What you need
@@ -142,8 +143,10 @@ OpenWrt defaults (jack 1 = LAN at 192.168.1.1 with a DHCP server, jack 2 = WAN) 
 
 ### Not supported
 
-- The 5G/LTE modem. Cellular modem support is not included; the unit works as a router or access point with a
-  wired internet connection only.
+- The 5G/LTE modem in the normal build: it is switched off, and the unit works as a router or access point with a
+  wired internet connection only. An optional build includes experimental modem support; it uses programs copied
+  from your unit's stock firmware and writes to partitions the stock firmware shares. See
+  [docs/modem.md](docs/modem.md).
 - `sysupgrade`. To update, go back to the stock firmware and install the new image again. **This erases your
   OpenWrt settings and any packages you added**, so note or back them up first.
 - OpenWrt in both slots. Always keep the stock firmware in one slot: it is the only way back. The install command
@@ -202,6 +205,7 @@ that SSH needs inside the image.
 | Build and signing | `build.sh`, `build/`, `docker/`, `config/` | - | `out/$STAMP/SHA256SUMS`, `PROVENANCE` |
 | Image check | `scripts/check_image.sh`, `scripts/resign_boot.py` | - | `out/$STAMP/CHECK.txt` (one line per check) |
 | Install and slot switch | `device.sh`, `scripts/device/` | - | `./device.sh status root@DEVICE` |
+| Modem (optional, [docs/modem.md](docs/modem.md)) | `./build.sh pull-modem`, `modem-files.lock`, `feed/` (service and LuCI packages) | `kmod-mt6990-modem`, device tree | `modem:` in `PROVENANCE`, `out/$STAMP/MODEM_FILES` |
 | Automatic return | - | `target/linux/mediatek/mt6990/base-files/usr/sbin/air6-abguard` | `air6-abguard status`, `logread -e air6-abguard` on the unit |
 
 Every build writes `out/$STAMP/PROVENANCE`: the commits of the fork and of this kit, the downloaded files, and the
