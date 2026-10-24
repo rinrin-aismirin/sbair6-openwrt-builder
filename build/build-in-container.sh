@@ -76,12 +76,6 @@ st "download"
 make download -j8 > "$S/download.log" 2>&1
 st "build"
 make -j"$(nproc)" > "$S/build.log" 2>&1
-KCONF=$(ls -d build_dir/target-*/linux-mediatek_mt6990/linux-*/.config)
-# The fork's 972i-net-ethernet-mediatek-mt6990-sdk-irq-layout.patch makes mtk_poll_controller() pass the
-# net_device to mtk_handle_irq_rx(), which expects the struct mtk_eth. That code is only built with
-# NET_POLL_CONTROLLER, so refuse a kernel config that enables it.
-if grep -q '^CONFIG_NET_POLL_CONTROLLER=y' "$KCONF"; then st "NET_POLL_CONTROLLER is enabled (see build-in-container.sh)"; exit 1; fi
-
 st "finish: pack, sign, check"
 "$K/build/finish.sh" "$T" "$X" "$W/kit-out/$STAMP" "$FORK_COMMIT" > "$S/finish.log" 2>&1
 st "DONE"

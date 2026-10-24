@@ -4,4 +4,4 @@
 # Format: shell variables (sourced by build.sh).
 FORK_REPO=https://github.com/rinrin-aismirin/openwrt.git
 FORK_BRANCH=air6
-FORK_COMMIT=60b054581192411f5955dde167940ed25e09c831
+FORK_COMMIT=75026e36b37cd8adb324d6e512426bc34b5401ed
