@@ -1,0 +1,2 @@
+# Packages left out of `./build.sh start --all-kmods`, one per line: "package # reason".
+kmod-ipt-rtpengine # does not build with Linux 6.18: its Makefile passes EXTRA_CFLAGS, which kbuild no longer reads

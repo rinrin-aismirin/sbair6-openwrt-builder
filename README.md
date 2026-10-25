@@ -78,14 +78,17 @@ Optional: if you want your SSH key or your own settings in the image, put them u
     ./build.sh fetch                   # the OpenWrt fork, at the commit this kit is tested with
     ./build.sh pull-fw root@DEVICE     # the Wi-Fi firmware from your unit (once)
     STAMP=$(./build.sh start)          # start the build
-    echo $STAMP                        # its build ID, for example 20261019-1200-8406013b; note it
+    echo $STAMP                        # its build ID, for example 20261024-224537-75026e36; note it
     ./build.sh status $STAMP           # repeat until the last line says "result: done"
     ./build.sh collect $STAMP          # the result goes to out/$STAMP/; this must print "RESULT: PASS"
 
-If `status` says `result: failed`, run `./build.sh logs $STAMP` and look at the log files it copies to
-`out/logs-$STAMP/`.
+The build reads this directory (including `local/`) and the fork checkout while it runs: do not change them until
+`status` says done or failed. Only one build runs at a time; a second `start` is refused while one is running.
 
-In a new shell, set the build ID again before using it: `STAMP=20261019-1200-8406013b` (the directory name under
+If `status` says `result: failed`, run `./build.sh logs $STAMP` and look at the log files it copies to
+`out/logs-$STAMP/`. It does not replace an existing `out/logs-$STAMP/`: remove that directory to copy the logs again.
+
+In a new shell, set the build ID again before using it: `STAMP=20261024-224537-75026e36` (the directory name under
 `out/`).
 
 **2. Install.** The unit must run the stock firmware.
@@ -167,8 +170,11 @@ OpenWrt defaults (jack 1 = LAN at 192.168.1.1 with a DHCP server, jack 2 = WAN) 
   not running from, which is the OpenWrt slot. (Read from the stock update script; not observed.)
 - OpenWrt keeps its settings in its own slot (about 120 MiB). It does not use the stock firmware's data partition
   (`user_data`, about 3 GiB). Do not format that partition: the stock firmware keeps its data there.
-- Packages you add with `apk` must come from the same build (`out/$STAMP/packages/`): every build has its own
-  kernel and its own package signing key.
+- Packages you add with `apk` must come from the build whose image the unit runs (`out/$STAMP/packages/` of that
+  build): install that build's image first, then its packages, and do not force `apk` past dependency checks. Every
+  build has its own package signing key. Kernel module packages depend on a kernel package version; two builds with
+  the same version are not necessarily built from the same sources, so the version alone does not make another
+  build's modules safe to use.
 
 ## Customizing the image
 
@@ -186,6 +192,36 @@ that SSH needs inside the image.
       uci commit system
       exit 0
 
+`./build.sh start --no-local-files` builds without them (they stay where they are). When `local/files/` replaces
+kernel modules, firmware, module settings, start-up scripts or package data, `start` lists those paths and
+`PROVENANCE` records them. Scripts in `local/files/` can run while the image is made, not only on the unit.
+
+### Build options for developers
+
+These change what is built, not only what is copied into the image. Each is used only when given:
+
+| Option | Uses | Note |
+| --- | --- | --- |
+| `--local-config` | `local/diffconfig` | OpenWrt configuration lines added after the kit's own, for example `CONFIG_PACKAGE_kmod-usb-net-rtl8152=y`. A package asked for with `=y` must still be `=y` after OpenWrt resolves the configuration, or the build stops before compiling. |
+| `--kernel-patches` | `local/kernel-patches/NNN-name.patch` | Added to the kernel patches of the fork (`target/linux/generic/pending-<kernel>/`). A name that the fork already uses is refused. |
+| `--all-kmods` | - | Builds every kernel module as a package, except those in `config/all-kmods.exclude`. This also changes the kernel itself, so it is a different build, not the same image plus packages. `CONFIG_ALL`, `CONFIG_ALL_NONSHARED` and `CONFIG_BUILDBOT` (which also select userspace packages) are refused with or without this option. |
+
+For example: `./build.sh start --local-config --kernel-patches`. Without `--local-config`, a `local/diffconfig` is
+not used (earlier versions of this kit used it automatically); `start` says so.
+
+`PROVENANCE` gives every build a class: `reference` (the fork in `fork.lock`, this kit's commit unchanged, no options,
+no modem, nothing from `local/files`), `reference + rootfs overlay` (the same with `local/files`), or `modified:`
+followed by what differs. The class describes the inputs; it does not say the image was tested.
+
+### What may be passed on
+
+This kit does not say that any file of a build may be given to others. The images and packages can contain your
+`local/files/` (keys, passwords) and files whose redistribution has not been cleared (see
+[Files from outside this repository](#files-from-outside-this-repository) and [docs/modem.md](docs/modem.md)).
+`PROVENANCE` holds no file contents from `local/`, but its paths, options and hashes can still describe your setup.
+`out/$STAMP/private/` holds your inputs as the build used them and the resolved configurations; it is readable by you
+only.
+
 ## Files from outside this repository
 
 - **Wi-Fi firmware:** `./build.sh pull-fw` copies four files over SSH from the stock firmware of your unit into
@@ -202,11 +238,13 @@ that SSH needs inside the image.
 | OpenWrt source | `fork.lock`, `./build.sh fetch` | branch `air6` | `fork.lock` commit = `openwrt fork:` in `PROVENANCE` |
 | Boot image tools | `externals.lock`, `build/fetch-externals.sh` | - | `externals:` in `PROVENANCE` |
 | Wi-Fi firmware | `stock-firmware.lock`, `./build.sh pull-fw`, `scripts/device/stock_wifi_fw.sh` | `package/kernel/mt76/patches/999-*` | `wifi firmware:` in `PROVENANCE`; on the unit, `dmesg \| grep mt7996e` shows the firmware build times |
-| Build and signing | `build.sh`, `build/`, `docker/`, `config/` | - | `out/$STAMP/SHA256SUMS`, `PROVENANCE` |
+| Build and signing | `build.sh`, `build/`, `docker/`, `config/` | - | `out/$STAMP/SHA256SUMS`, `PACKAGES.sha256`, `PROVENANCE` |
 | Image check | `scripts/check_image.sh`, `scripts/resign_boot.py` | - | `out/$STAMP/CHECK.txt` (one line per check) |
 | Install and slot switch | `device.sh`, `scripts/device/` | - | `./device.sh status root@DEVICE` |
 | Modem (optional, [docs/modem.md](docs/modem.md)) | `./build.sh pull-modem`, `modem-files.lock`, `feed/` (service and LuCI packages) | `kmod-mt6990-modem`, device tree | `modem:` in `PROVENANCE`, `out/$STAMP/MODEM_FILES` |
 | Automatic return | - | `target/linux/mediatek/mt6990/base-files/usr/sbin/air6-abguard` | `air6-abguard status`, `logread -e air6-abguard` on the unit |
 
-Every build writes `out/$STAMP/PROVENANCE`: the commits of the fork and of this kit, the downloaded files, and the
-hashes of the Wi-Fi firmware. On the unit, `/etc/openwrt_release` shows the OpenWrt revision it was built from.
+Every build writes `out/$STAMP/PROVENANCE`: the build class and options, the commits of the fork and of this kit
+(and any uncommitted change to the kit's build files), the downloaded files, the hashes of the Wi-Fi firmware and of
+the resolved configurations, and the kernel package version its kernel module packages depend on. `collect` never
+replaces an existing `out/$STAMP/` of another build. On the unit, `/etc/openwrt_release` shows the OpenWrt revision it was built from.
