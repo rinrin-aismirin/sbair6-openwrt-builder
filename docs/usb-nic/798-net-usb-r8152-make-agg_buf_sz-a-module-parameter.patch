@@ -1,0 +1,50 @@
+From: OpenWrt MT6990 repair <mt6990@local>
+Subject: [PATCH] net: usb: r8152: make the TX aggregation buffer size a module parameter
+
+agg_buf_sz (16 KiB) sizes each of the four TX aggregation buffers and also
+bounds the TSO size and the TX queue length. On a SoftBank Air 6 (MT6990,
+xhci-mtk) with an RTL8156B adapter, TCP TX reached about 1.4 Gbit/s with
+16 KiB and about 2.35 Gbit/s (2.5G line rate) with 64 KiB. Raising the
+number of TX buffers instead did not improve it. Which effect of the
+larger buffers (fewer USB transfers, larger TSO, deeper queue) made the
+difference was not isolated.
+
+Expose agg_buf_sz as a read-only module parameter. The default stays
+16384, so behaviour is unchanged unless the parameter is set. Parsed
+values outside 16384-65536 are replaced by the default with a warning.
+The parameter applies to every device the driver binds.
+
+--- a/drivers/net/usb/r8152.c
++++ b/drivers/net/usb/r8152.c
+@@ -1271,7 +1271,15 @@ enum tx_csum_stat {
+  * The RTL chips use a 64 element hash table based on the Ethernet CRC.
+  */
+ static const int multicast_filter_limit = 32;
+-static unsigned int agg_buf_sz = 16384;
++#define RTL8152_AGG_BUF_SZ_DEFAULT	16384
++#define RTL8152_AGG_BUF_SZ_MAX		65536
++
++/* Size of each TX aggregation buffer. It also bounds the TSO size and the TX
++ * queue length.
++ */
++static unsigned int agg_buf_sz = RTL8152_AGG_BUF_SZ_DEFAULT;
++module_param(agg_buf_sz, uint, 0444);
++MODULE_PARM_DESC(agg_buf_sz, "TX aggregation buffer size in bytes (16384-65536, default 16384)");
+ 
+ #define RTL_LIMITED_TSO_SIZE	(size_to_mtu(agg_buf_sz) - tp->tx_desc.size)
+ 
+@@ -10212,6 +10220,14 @@ static int __init rtl8152_driver_init(vo
+ {
+ 	int ret;
+ 
++	if (agg_buf_sz < RTL8152_AGG_BUF_SZ_DEFAULT ||
++	    agg_buf_sz > RTL8152_AGG_BUF_SZ_MAX) {
++		pr_warn("r8152: agg_buf_sz %u out of range %u-%u, using %u\n",
++			agg_buf_sz, RTL8152_AGG_BUF_SZ_DEFAULT,
++			RTL8152_AGG_BUF_SZ_MAX, RTL8152_AGG_BUF_SZ_DEFAULT);
++		agg_buf_sz = RTL8152_AGG_BUF_SZ_DEFAULT;
++	}
++
+ 	ret = usb_register_device_driver(&rtl8152_cfgselector_driver, THIS_MODULE);
+ 	if (ret)
+ 		return ret;

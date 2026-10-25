@@ -44,7 +44,8 @@ What works today, in short tests on one unit (hours, not days):
 - returning to the stock firmware automatically when a new image does not come up
 
 What does not work yet: updates that keep your settings. The 5G/LTE modem works only in an optional,
-experimental build ([docs/modem.md](docs/modem.md)).
+experimental build ([docs/modem.md](docs/modem.md)). A USB 2.5G network adapter needs its driver added to the
+build ([docs/usb-nic.md](docs/usb-nic.md)).
 Details are in [Status](#status).
 
 ## What you need

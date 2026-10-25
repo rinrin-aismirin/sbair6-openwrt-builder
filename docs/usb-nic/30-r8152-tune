@@ -1,0 +1,18 @@
+# /etc/hotplug.d/net/30-r8152-tune (sourced by hotplug-call for every network device event)
+# When a network device of the r8152 driver appears, run its NAPI in a kernel thread and reload OpenWrt's packet
+# steering (RPS is lost when the device is re-created). Applies to every r8152 device, not one adapter. The reload
+# re-applies packet steering to all network devices according to network.@globals[0].packet_steering.
+[ "$ACTION" = add ] || exit 0
+[ "$(basename "$(readlink "/sys/class/net/$INTERFACE/device/driver")")" = r8152 ] || exit 0
+failed=
+if ! echo 1 > "/sys/class/net/$INTERFACE/threaded" || [ "$(cat "/sys/class/net/$INTERFACE/threaded")" != 1 ]; then
+	failed="$failed threaded-NAPI"
+fi
+/etc/init.d/packet_steering reload || failed="$failed packet-steering-reload"
+rps=$(cat "/sys/class/net/$INTERFACE/queues/rx-0/rps_cpus" 2>/dev/null)
+steering=$(uci -q get network.@globals[0].packet_steering)
+if [ -n "$failed" ]; then
+	logger -p daemon.err -t r8152-tune "$INTERFACE: failed:$failed"
+else
+	logger -t r8152-tune "$INTERFACE: threaded NAPI on; packet steering reloaded (packet_steering=${steering:-default}, rps_cpus=${rps:-?})"
+fi
