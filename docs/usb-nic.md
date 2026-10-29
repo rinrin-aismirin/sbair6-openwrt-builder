@@ -23,13 +23,14 @@ options of this page on any image other than the author's (which also had access
 ## 1. Include the driver
 
 The image has no package repository, so the driver must be in the build. Put this line in `local/diffconfig` and
-build with `--local-config` (see "Build options for developers" in the README):
+build with `--local-config` (see [build options](build.md#build-options)):
 
     CONFIG_PACKAGE_kmod-usb-net-rtl8152=y
 
     STAMP=$(./build.sh start --local-config)
 
-This also selects `r8152-firmware`. Then follow the README from `status` to `collect` and install the image.
+This also selects `r8152-firmware` (add `--trial` for a trial image). Then continue with `status` and `collect` as in
+[docs/install.md step 2](install.md#2-build), and install as in [step 3](install.md#3-install).
 
 With only this step, the author measured about 1.4 Gbit/s from the unit and 2.2 Gbit/s to it.
 
@@ -86,13 +87,13 @@ What these settings affect, beyond this adapter:
        mkdir -p local/files/etc/hotplug.d/net
        cp docs/usb-nic/30-r8152-tune local/files/etc/hotplug.d/net/
 
-   The files must be readable by others on your computer (see "Customizing the image" in the README).
+   The files must be readable by others on your computer (see [customizing the image](build.md#customizing-the-image)).
 
 ### 2b. Build and install
 
     STAMP=$(./build.sh start --local-config --kernel-patches)
 
-Then `status`, `collect` and install as in the README. `PROVENANCE` lists the patch under "kernel patches" and
+Then `status`, `collect` and install as in [docs/install.md](install.md#2-build). `PROVENANCE` lists the patch under "kernel patches" and
 the build class says `modified: local-config, kernel-patches, rootfs overlay`.
 
 ### 2c. Check on the unit

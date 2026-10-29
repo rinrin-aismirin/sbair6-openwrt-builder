@@ -48,9 +48,9 @@ root filesystem instead (a squashfs image, for example from a backup of the `roo
 
 ## 2. Build with the modem
 
-As in the README's [build step](../README.md), with `AIR6_MODEM=1` in front of `./build.sh start`:
+As in [step 2 of docs/install.md](install.md#2-build), with `AIR6_MODEM=1` in front of `./build.sh start`:
 
-    STAMP=$(AIR6_MODEM=1 ./build.sh start)
+    STAMP=$(AIR6_MODEM=1 ./build.sh start)    # add --trial for a trial image
     echo $STAMP
     ./build.sh status $STAMP           # repeat until the last line says "result: done"
     ./build.sh collect $STAMP          # must print "RESULT: PASS"
@@ -62,7 +62,7 @@ copied programs against the checksums `pull-modem` recorded, and lists them with
 
 ## 3. Install
 
-As in [install.md](install.md), with the `$STAMP` from step 2. `./device.sh install` first compares the version of
+As in [install.md step 3](install.md#3-install), with the `$STAMP` from step 2. `./device.sh install` first compares the version of
 the copied programs with the modem firmware of the target slot (see above).
 
 ## 4. Back up the NV partitions

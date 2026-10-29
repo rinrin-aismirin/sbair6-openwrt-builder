@@ -13,16 +13,77 @@
 > country's regulations
 > ([Country code for Wi-Fi operation](https://openwrt.org/docs/guide-user/network/wifi/wifi_countrycode)).
 
-## Overview
+## What this is
 
 The SoftBank Air 6 (model A775) is a 5G home router built on a MediaTek MT6990 module, with tri-band Wi-Fi 7 and two
-Ethernet jacks. This kit builds an OpenWrt SNAPSHOT for it (from OpenWrt's main branch, not a release) and installs
-it next to the stock firmware: the unit has two system slots, and OpenWrt goes into the one the stock firmware is
-not running from. It is a work in progress: modem support is optional and experimental, and everything has only
-been tested briefly on one unit. If OpenWrt crashes or cannot be reached, the unit normally returns to the stock firmware by
-itself (see [How it works](docs/install.md#how-it-works) for the one case it does not cover).
+Ethernet jacks. This kit builds an OpenWrt SNAPSHOT image for it (from OpenWrt's main branch, not a release) on your
+Linux computer and installs it over SSH.
 
-What it is based on:
+The unit has two system slots. The stock firmware runs from one of them; the install writes OpenWrt into the other
+one and never writes the stock firmware's slot, so the stock firmware stays as the way back.
+
+Read these before you decide to install:
+
+- **No updates that keep your settings.** To move to a new build, go back to the stock firmware and install again
+  ([updating](docs/install.md#updating-to-a-new-build)); your OpenWrt settings and added packages are lost, so note
+  or back them up first.
+- **A stock firmware update overwrites OpenWrt.** When the stock firmware updates itself, it writes the slot it is
+  not running from, which is the OpenWrt slot. (Read from the stock update script; not observed.)
+- **The 5G/LTE modem is off** in the default build (without modem support): the unit works as a router or access point with a wired internet
+  connection only. An optional, experimental build includes modem support; it writes to partitions the stock
+  firmware shares ([docs/modem.md](docs/modem.md)).
+- **A normal image, once it has finished starting, is kept**, even if you cannot reach it over the network. The
+  bootloader returns to the stock firmware by itself only when OpenWrt crashes and the unit resets before start-up
+  finishes. A trial image (recommended for a first install) can also return by itself, if its return timer is armed
+(check its status after the boot). For the other
+  cases there are manual ways out (failsafe mode, a key held at power-on); see
+  [How it works](docs/install.md#how-it-works).
+- **OpenWrt's network defaults** (jack 1 = LAN at 192.168.1.1 with a DHCP server, jack 2 = WAN) have not been tried
+  on a unit yet: the tests used an image set up as an access point on an existing network.
+
+## Status
+
+Tested on one unit, in short tests (hours, not days). The tested images used a local overlay that set the unit up as
+an access point.
+
+| Area | Tested | Not tested |
+| --- | --- | --- |
+| Install and boot | Install from the stock firmware on slot A; boot; return to the stock firmware by the bootloader after failed boots | Installing from a unit whose stock firmware runs from slot B |
+| Keeping and leaving OpenWrt | Slot marked good at the end of start-up, staying across reboots; switching slots by holding the LEVEL key at power-on; failsafe mode with the WPS key. On an earlier build, before later fixes to the timer and the key handling: a trial image returning after 10 minutes, failsafe with the RESET key (the current timer code is tested on the host only) | Reaching failsafe mode (192.168.1.1) from a computer; the LEVEL key's error cases |
+| Ethernet | Both jacks on the internal switch at 1 Gbit/s, traffic in both directions, a cable replug | |
+| Wi-Fi (stock firmware files) | 2.4, 5 and 6 GHz bands present; one access point on 5 + 6 GHz (MLO, WPA3) with a Wi-Fi 7 phone at 80 MHz: about 925 Mbit/s from the phone, 760-790 Mbit/s to it (iperf3) | 2.4 GHz with a client; 160 MHz channels |
+| USB | A USB 3 memory stick (FAT) at 5 Gbit/s on the Type-A port | USB 2 devices; starting up with a device plugged in |
+| LEDs | Front panel and jack LEDs | |
+| Long-term | | Running for days or longer |
+
+Not supported:
+
+- `sysupgrade` (updates that keep settings).
+- OpenWrt in both slots: always keep the stock firmware in one slot, it is the only way back. The install refuses to
+  run unless the stock firmware is running, so it never writes the stock firmware's own slot.
+- Recovery without the stock firmware: no working serial-console recovery procedure.
+- Over-current protection on the USB port (not ported).
+- The modem in the default build (optional build: [docs/modem.md](docs/modem.md)).
+
+## What you need
+
+- A Linux computer with Docker and git, and about 20 GB of free disk space (measured: build cache 13 GB, Docker
+  image 1.2 GB, OpenWrt source 0.4 GB). Tested on x86_64 Debian 13 with rootless Docker; other setups have not been
+  tried.
+- The Air 6, running the stock firmware, and root SSH access to it. This kit does not set up that access.
+- A computer you can plug into jack 1 of the Air 6, to reach OpenWrt after the install. It can be the same Linux
+  computer.
+
+## Where to go next
+
+| You want to | Read |
+| --- | --- |
+| Build, install, check, go back to the stock firmware, or recover | [docs/install.md](docs/install.md) (one walk-through, from the build to the first login) |
+| Put your SSH key or settings into the image, add packages, use the build options, read the build records | [docs/build.md](docs/build.md) |
+| Use the 5G/LTE modem (experimental) | [docs/modem.md](docs/modem.md) |
+| Use a USB 2.5G network adapter (RTL8156B) | [docs/usb-nic.md](docs/usb-nic.md) |
+
+## What it is based on
 
 - **OpenWrt:** a fork of OpenWrt main with the MT6990 platform and the Air 6 added,
   https://github.com/rinrin-aismirin/openwrt (branch `air6`). The kernel support comes from an OpenWrt tree for
@@ -32,220 +93,5 @@ What it is based on:
   bootloader accepts, are downloaded from the LG6851F repository when you build.
 
 The files from the stock firmware and from the LG6851F repository are not part of this repository: we have not found
-a licence that allows redistributing them. The kit fetches them itself and checks them by hash (see
-[Files from outside this repository](#files-from-outside-this-repository)).
-
-What works today, in short tests on one unit (hours, not days):
-
-- both Ethernet jacks (1 Gbit/s)
-- Wi-Fi 7 on 5 GHz and 6 GHz, including MLO with a Wi-Fi 7 phone
-- the USB 3 port (a memory stick at 5 Gbit/s)
-- the front and jack LEDs
-- returning to the stock firmware automatically when a new image does not come up
-
-What does not work yet: updates that keep your settings. The 5G/LTE modem works only in an optional,
-experimental build ([docs/modem.md](docs/modem.md)). A USB 2.5G network adapter needs its driver added to the
-build ([docs/usb-nic.md](docs/usb-nic.md)).
-Details are in [Status](#status).
-
-## What you need
-
-- A Linux computer with Docker and git, and about 20 GB of free disk space (measured: build cache 13 GB, Docker
-  image 1.2 GB, OpenWrt source 0.4 GB). Tested on x86_64 Debian 13 with rootless Docker; other setups have not been
-  tried.
-- The Air 6, running the stock firmware, and root SSH access to it.
-- A computer you can plug into jack 1 of the Air 6, to reach OpenWrt after the install. It can be the same Linux
-  computer.
-
-## Quick start
-
-In the examples, `root@DEVICE` is the unit while it runs the stock firmware.
-
-**0. Get the kit.** Run all later commands in this directory.
-
-    git clone https://github.com/rinrin-aismirin/sbair6-openwrt-builder.git
-    cd sbair6-openwrt-builder
-
-If your Docker runs under a context other than the current one (for example rootless Docker), set it first:
-
-    export DOCKER_CONTEXT=rootless
-
-Optional: if you want your SSH key or your own settings in the image, put them under `local/files/` now (see
-[Customizing the image](#customizing-the-image)). They cannot be added to an image that is already built.
-
-**1. Build.** A full build took about 15 minutes on a 32-thread machine, including the downloads.
-
-    ./build.sh image                   # the Docker image the build runs in (once)
-    ./build.sh fetch                   # the OpenWrt fork, at the commit this kit is tested with
-    ./build.sh pull-fw root@DEVICE     # the Wi-Fi firmware from your unit (once)
-    STAMP=$(./build.sh start)          # start the build
-    echo $STAMP                        # its build ID, for example 20261024-224537-75026e36; note it
-    ./build.sh status $STAMP           # repeat until the last line says "result: done"
-    ./build.sh collect $STAMP          # the result goes to out/$STAMP/; this must print "RESULT: PASS"
-
-The build reads this directory (including `local/`) and the fork checkout while it runs: do not change them until
-`status` says done or failed. Only one build runs at a time; a second `start` is refused while one is running.
-
-If `status` says `result: failed`, run `./build.sh logs $STAMP` and look at the log files it copies to
-`out/logs-$STAMP/`. It does not replace an existing `out/logs-$STAMP/`: remove that directory to copy the logs again.
-
-In a new shell, set the build ID again before using it: `STAMP=20261024-224537-75026e36` (the directory name under
-`out/`).
-
-**2. Install.** The unit must run the stock firmware.
-
-    ./device.sh install root@DEVICE $STAMP
-    ./device.sh reboot root@DEVICE
-
-**3. Confirm this boot.** Plug a computer into jack 1. OpenWrt's defaults give it an address in 192.168.1.0/24
-(these defaults have not been tried on a unit yet; see [Status](#status)). Within 10 minutes of the reboot, run:
-
-    ./device.sh confirm root@192.168.1.1
-
-or, from a computer without this kit:
-
-    ssh root@192.168.1.1 air6-abguard confirm
-
-Without this, the unit goes back to the stock firmware after 10 minutes. That is on purpose: if you cannot reach
-OpenWrt, you get the stock firmware back. On the first login, root has no password (OpenWrt's default); set one with
-`passwd`.
-
-`confirm` covers this boot only. When you have checked that OpenWrt works and want to keep it, see
-[Keeping OpenWrt](docs/install.md#keeping-openwrt-across-reboots):
-
-| Command | What it does |
-| --- | --- |
-| `./device.sh confirm` | stops the 10-minute return to the stock firmware, for this boot only |
-| `air6-abguard commit` (on OpenWrt) | keeps OpenWrt: no more automatic return to the stock firmware |
-| `./device.sh to-stock` | switches to the stock firmware now and reboots |
-
-**To go back to the stock firmware** at any time:
-
-    ./device.sh to-stock root@192.168.1.1
-
-[docs/install.md](docs/install.md) explains each step, what you should see, and what to do when something goes
-wrong.
-
-## Status
-
-### Tested
-
-On one unit, in short tests:
-
-- Boot, and the automatic return to the stock firmware (by the bootloader after failed boots, and by `air6-abguard`
-  when OpenWrt is not confirmed).
-- Ethernet: both jacks on the internal switch at 1 Gbit/s. Traffic in both directions and a cable replug, without
-  errors.
-- Wi-Fi with the stock Wi-Fi firmware: the 2.4, 5 and 6 GHz bands are present. One access point on 5 GHz and
-  6 GHz together (MLO, WPA3) with a Wi-Fi 7 phone at 80 MHz: about 925 Mbit/s from the phone and 760-790 Mbit/s to
-  the phone (iperf3).
-- USB: a USB 3 memory stick (FAT) at 5 Gbit/s on the Type-A port.
-- LEDs: front panel and jack LEDs.
-
-The tested image used a local overlay to configure the unit as an access point on an existing network. The
-OpenWrt defaults (jack 1 = LAN at 192.168.1.1 with a DHCP server, jack 2 = WAN) have not been tried on a unit yet.
-
-### Not supported
-
-- The 5G/LTE modem in the normal build: it is switched off, and the unit works as a router or access point with a
-  wired internet connection only. An optional build includes experimental modem support; it uses programs copied
-  from your unit's stock firmware and writes to partitions the stock firmware shares. See
-  [docs/modem.md](docs/modem.md).
-- `sysupgrade`. To update, go back to the stock firmware and install the new image again. **This erases your
-  OpenWrt settings and any packages you added**, so note or back them up first.
-- OpenWrt in both slots. Always keep the stock firmware in one slot: it is the only way back. The install command
-  refuses to run unless the stock firmware is running, so it never writes the stock firmware's own slot.
-
-### Not tested
-
-- Running for days or longer.
-- Installing on a unit that runs the stock firmware from its second slot (slot B).
-- 2.4 GHz with a client, and 160 MHz channels.
-- USB 2 devices, and starting up with a USB device plugged in. Over-current protection on the USB port is not
-  ported.
-- Recovery without the stock firmware: no working serial-console recovery procedure has been established.
-
-### Good to know
-
-- **A stock firmware update overwrites OpenWrt.** When the stock firmware updates itself, it writes the slot it is
-  not running from, which is the OpenWrt slot. (Read from the stock update script; not observed.)
-- OpenWrt keeps its settings in its own slot (about 120 MiB). It does not use the stock firmware's data partition
-  (`user_data`, about 3 GiB). Do not format that partition: the stock firmware keeps its data there.
-- Packages you add with `apk` must come from the build whose image the unit runs (`out/$STAMP/packages/` of that
-  build): install that build's image first, then its packages, and do not force `apk` past dependency checks. Every
-  build has its own package signing key. Kernel module packages depend on a kernel package version; two builds with
-  the same version are not necessarily built from the same sources, so the version alone does not make another
-  build's modules safe to use.
-
-## Customizing the image
-
-Files under `local/files/` are copied into the image (OpenWrt's `files/` mechanism). `local/` is not tracked by git.
-Create them before `./build.sh start`. The build reads them as another user, so they must be readable by others on
-your computer (for example `chmod 644`, and `chmod 755` for directories); the build sets the stricter permissions
-that SSH needs inside the image.
-
-- `local/files/etc/dropbear/authorized_keys`: your SSH **public** key, for example a copy of
-  `~/.ssh/id_ed25519.pub`.
-- `local/files/etc/uci-defaults/99-local`: a shell script run once on the first boot to change the defaults with
-  `uci`, for example:
-
-      uci set system.@system[0].hostname='air6'
-      uci commit system
-      exit 0
-
-`./build.sh start --no-local-files` builds without them (they stay where they are). When `local/files/` replaces
-kernel modules, firmware, module settings, start-up scripts or package data, `start` lists those paths and
-`PROVENANCE` records them. Scripts in `local/files/` can run while the image is made, not only on the unit.
-
-### Build options for developers
-
-These change what is built, not only what is copied into the image. Each is used only when given:
-
-| Option | Uses | Note |
-| --- | --- | --- |
-| `--local-config` | `local/diffconfig` | OpenWrt configuration lines added after the kit's own, for example `CONFIG_PACKAGE_kmod-usb-net-rtl8152=y`. A package asked for with `=y` must still be `=y` after OpenWrt resolves the configuration, or the build stops before compiling. |
-| `--kernel-patches` | `local/kernel-patches/NNN-name.patch` | Added to the kernel patches of the fork (`target/linux/generic/pending-<kernel>/`). A name that the fork already uses is refused. |
-| `--all-kmods` | - | Builds every kernel module as a package, except those in `config/all-kmods.exclude`. This also changes the kernel itself, so it is a different build, not the same image plus packages. `CONFIG_ALL`, `CONFIG_ALL_NONSHARED` and `CONFIG_BUILDBOT` (which also select userspace packages) are refused with or without this option. |
-
-For example: `./build.sh start --local-config --kernel-patches`. Without `--local-config`, a `local/diffconfig` is
-not used (earlier versions of this kit used it automatically); `start` says so.
-
-`PROVENANCE` gives every build a class: `reference` (the fork in `fork.lock`, this kit's commit unchanged, no options,
-no modem, nothing from `local/files`), `reference + rootfs overlay` (the same with `local/files`), or `modified:`
-followed by what differs. The class describes the inputs; it does not say the image was tested.
-
-### What may be passed on
-
-This kit does not say that any file of a build may be given to others. The images and packages can contain your
-`local/files/` (keys, passwords) and files whose redistribution has not been cleared (see
-[Files from outside this repository](#files-from-outside-this-repository) and [docs/modem.md](docs/modem.md)).
-`PROVENANCE` holds no file contents from `local/`, but its paths, options and hashes can still describe your setup.
-`out/$STAMP/private/` holds your inputs as the build used them and the resolved configurations; it is readable by you
-only.
-
-## Files from outside this repository
-
-- **Wi-Fi firmware:** `./build.sh pull-fw` copies four files over SSH from the stock firmware of your unit into
-  `local/firmware/` (not tracked by git). `stock-firmware.lock` lists their hashes as seen on stock firmware 1.01.36,
-  1.01.46 and 1.01.52. A file with another hash (another stock version) is accepted with a warning, but has not been
-  tested; `out/$STAMP/PROVENANCE` marks it.
-- **Boot image tools:** downloaded from the LG6851F repository at the commit pinned in `externals.lock`. If any hash
-  differs, the build stops.
-
-## How the pieces fit together
-
-| Part | In this repository | In the fork | How to check it |
-| --- | --- | --- | --- |
-| OpenWrt source | `fork.lock`, `./build.sh fetch` | branch `air6` | `fork.lock` commit = `openwrt fork:` in `PROVENANCE` |
-| Boot image tools | `externals.lock`, `build/fetch-externals.sh` | - | `externals:` in `PROVENANCE` |
-| Wi-Fi firmware | `stock-firmware.lock`, `./build.sh pull-fw`, `scripts/device/stock_wifi_fw.sh` | `package/kernel/mt76/patches/999-*` | `wifi firmware:` in `PROVENANCE`; on the unit, `dmesg \| grep mt7996e` shows the firmware build times |
-| Build and signing | `build.sh`, `build/`, `docker/`, `config/` | - | `out/$STAMP/SHA256SUMS`, `PACKAGES.sha256`, `PROVENANCE` |
-| Image check | `scripts/check_image.sh`, `scripts/resign_boot.py` | - | `out/$STAMP/CHECK.txt` (one line per check) |
-| Install and slot switch | `device.sh`, `scripts/device/` | - | `./device.sh status root@DEVICE` |
-| Modem (optional, [docs/modem.md](docs/modem.md)) | `./build.sh pull-modem`, `modem-files.lock`, `feed/` (service and LuCI packages) | `kmod-mt6990-modem`, device tree | `modem:` in `PROVENANCE`, `out/$STAMP/MODEM_FILES` |
-| Automatic return | - | `target/linux/mediatek/mt6990/base-files/usr/sbin/air6-abguard` | `air6-abguard status`, `logread -e air6-abguard` on the unit |
-
-Every build writes `out/$STAMP/PROVENANCE`: the build class and options, the commits of the fork and of this kit
-(and any uncommitted change to the kit's build files), the downloaded files, the hashes of the Wi-Fi firmware and of
-the resolved configurations, and the kernel package version its kernel module packages depend on. `collect` never
-replaces an existing `out/$STAMP/` of another build. On the unit, `/etc/openwrt_release` shows the OpenWrt revision it was built from.
+a licence that allows redistributing them. The kit fetches them itself and checks them by hash
+([docs/build.md](docs/build.md#files-from-outside-this-repository)).
