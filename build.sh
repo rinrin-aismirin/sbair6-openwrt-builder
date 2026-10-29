@@ -3,20 +3,23 @@
 #   ./build.sh image                  build the Docker image that the build runs in (once)
 #   ./build.sh fetch                  download the OpenWrt fork into openwrt/, at the commit in fork.lock
 #   ./build.sh pull-fw [USER@]DEVICE  copy the Wi-Fi firmware from a unit running the stock firmware (once)
-#   ./build.sh pull-modem [USER@]DEVICE [SLOT] | FILE
-#                                     copy the modem userspace (optional modem support, see docs/modem.md) from
-#                                     a unit running the stock firmware (default: the slot it does not run from)
-#                                     or from a saved stock root filesystem image FILE
 #   ./build.sh start [OPTIONS]        start a build in the background and print its build ID
 #   ./build.sh status ID              show the progress of a build; the last line says running, done or failed
 #   ./build.sh collect ID             copy a finished build to out/ID/ and print the image check result
 #   ./build.sh logs ID                copy the logs of a build to out/logs-ID/ (for a failed build; an existing
 #                                     out/logs-ID/ is kept: remove it to copy again)
-# Options of start (any order, before DIR):
+# Optional modem support (docs/modem.md):
+#   ./build.sh pull-modem [USER@]DEVICE [SLOT] | FILE
+#                                     copy the modem userspace from a unit running the stock firmware (default:
+#                                     the slot it does not run from) or from a saved stock root filesystem image FILE
+# Options of start (any order, before DIR; details in docs/build.md):
 #   --no-local-files                  leave out local/files/ (used by default)
 #   --local-config                    add local/diffconfig to the build configuration (not used by default)
 #   --kernel-patches                  add local/kernel-patches/*.patch to the kernel patches (not used by default)
 #   --all-kmods                       build every kernel module as a package (config/all-kmods.exclude excepted)
+#   --trial                           trial image: air6.trial=1 on the kernel command line; a new install arms a
+#                                     timer that returns to the other slot after 10 minutes unless 'air6-slot trial
+#                                     commit' runs (check 'air6-slot status' for timer=armed)
 # Advanced:
 #   ./build.sh start [OPTIONS] DIR [COMMIT]
 #                                     build another checkout DIR of the fork, at COMMIT (default: its HEAD)
@@ -123,13 +126,14 @@ pull-modem)
 	echo "$OUT: $(grep -c . "$OUT/SHA256SUMS") files, version $VER"; cat "$OUT/MODEM_VERSION" ;;
 start)
 	shift
-	O_FILES=1 O_CONFIG= O_PATCHES= O_ALLK=
+	O_FILES=1 O_CONFIG= O_PATCHES= O_ALLK= O_TRIAL=
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-local-files) O_FILES= ;;
 		--local-config) O_CONFIG=1 ;;
 		--kernel-patches) O_PATCHES=1 ;;
 		--all-kmods) O_ALLK=1 ;;
+		--trial) O_TRIAL=1 ;;
 		--*) echo "unknown option: $1" >&2; exit 2 ;;
 		*) break ;;
 		esac
@@ -201,7 +205,7 @@ start)
 	cid=$($D create --name "$WORKER" --label "air6.run=$ID" --label "air6.token=$TOKEN" --label "air6.volume=$VOL" \
 		-e FORK_COMMIT="$C" -e FORK_LOCK_COMMIT="$FORK_COMMIT" -e RUN_ID="$ID" -e RUN_TOKEN="$TOKEN" \
 		-e AIR6_MODEM="$MODEM" -e O_FILES="$O_FILES" -e O_CONFIG="$O_CONFIG" -e O_PATCHES="$O_PATCHES" \
-		-e O_ALLK="$O_ALLK" -e KIT_START="$KIT_START" -e KIT_HEAD_START="$(git rev-parse HEAD)" \
+		-e O_ALLK="$O_ALLK" -e O_TRIAL="$O_TRIAL" -e KIT_START="$KIT_START" -e KIT_HEAD_START="$(git rev-parse HEAD)" \
 		-e START_TIME="$(date -u '+%F %T')" \
 		-v "$PWD:/kit:ro" -v "$FORK_DIR:/fork:ro" -v "$VOL:/home/build/work" "$IMG" /kit/build/build-in-container.sh) ||
 		{ echo "volume $VOL is in use (could not create $WORKER)" >&2; exit 1; }
@@ -285,5 +289,5 @@ logs)
 	ls "out/logs-$ID"
 	echo "the last step is in progress.log; its log file is named after the step" ;;
 *)
-	sed -n '2,27p' "$0"; exit 2 ;;
+	sed -n '2,30p' "$0"; exit 2 ;;
 esac

@@ -1,5 +1,5 @@
 # Print the booted slot, the boot control bytes and the boot-reason lines. Stock firmware only; on OpenWrt
-# use `air6-abguard status`. Run on the device over SSH:
+# use `air6-slot status`. Run on the device over SSH:
 #   ssh root@DEVICE 'sh -s' < scripts/device/read_ab.sh
 # bootctrl is 10 bytes: slot A prio, retry, success, uptype, (unused), then the same for slot B.
 . /lib/upgrade/common.sh 2>/dev/null; . /lib/upgrade/platform.sh 2>/dev/null; . /lib/upgrade/bootctrl.sh

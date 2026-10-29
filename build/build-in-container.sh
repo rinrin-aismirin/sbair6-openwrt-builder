@@ -3,8 +3,8 @@
 # Mounts: /kit (this repo, ro), /fork (the OpenWrt fork, ro), /home/build/work (cache volume). The build tree
 # borrows the fork's git objects, so later debug runs in that tree need /fork mounted as well.
 # Env: FORK_COMMIT (commit to build), FORK_LOCK_COMMIT (fork.lock's commit), RUN_ID, RUN_TOKEN, AIR6_MODEM,
-#   O_FILES / O_CONFIG / O_PATCHES / O_ALLK (selected options, "1" or empty), KIT_START (kit build inputs that
-#   differed from the kit commit at start), START_TIME.
+#   O_FILES / O_CONFIG / O_PATCHES / O_ALLK / O_TRIAL (selected options, "1" or empty), KIT_START (kit build
+#   inputs that differed from the kit commit at start), START_TIME.
 # Result: $W/kit-out/$RUN_ID (boot.img, rootfs.img, SHA256SUMS, PACKAGES.sha256, PROVENANCE, CHECK.txt, packages/,
 # private/); log in $W/kit-status/$RUN_ID/progress.log.
 # Inputs are read from /kit while the build runs (no snapshot). Every record of an input is made from the copy this
@@ -35,6 +35,7 @@ opts=""
 [ -n "$O_CONFIG" ] && opts="$opts --local-config"
 [ -n "$O_PATCHES" ] && opts="$opts --kernel-patches"
 [ -n "$O_ALLK" ] && opts="$opts --all-kmods"
+[ -n "${O_TRIAL:-}" ] && opts="$opts --trial"
 [ -n "${AIR6_MODEM:-}" ] && opts="$opts AIR6_MODEM=$AIR6_MODEM"
 echo "${opts# }" > "$R/options"
 
@@ -47,6 +48,14 @@ rm -rf "$T"
 git clone -q --shared --no-checkout /fork "$T"
 git -C "$T" -c advice.detachedHead=false checkout -q "$FORK_COMMIT"
 ln -s ../dl "$T/dl"
+
+if [ -n "${O_TRIAL:-}" ]; then
+	st "trial: air6.trial=1 in the DTS bootargs"
+	DTS=$T/target/linux/mediatek/dts/mt6990-softbank-air6.dts
+	[ "$(grep -c 'air6_dt_bootargs=1";' "$DTS")" = 1 ] || { st "trial: bootargs marker not found once in $DTS"; exit 1; }
+	sed -i 's/air6_dt_bootargs=1";/air6_dt_bootargs=1 air6.trial=1";/' "$DTS"
+	[ "$(grep -c 'air6_dt_bootargs=1 air6.trial=1";' "$DTS")" = 1 ] || { st "trial: DTS edit failed"; exit 1; }
+fi
 
 if [ -n "$O_PATCHES" ]; then
 	st "kernel patches"

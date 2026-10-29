@@ -1,10 +1,12 @@
 #!/bin/bash
-# Host entry point for working with the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh").
-#   ./device.sh status DEVICE           show the booted slot and the boot control bytes
+# Run on your computer: works on the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh"). See docs/install.md.
+#   ./device.sh status DEVICE           show the booted slot, the boot control bytes and (OpenWrt) the trial timer
 #   ./device.sh install DEVICE STAMP    (stock firmware) upload out/STAMP and install it into the other slot
 #   ./device.sh reboot DEVICE           reboot the unit
-#   ./device.sh confirm DEVICE          (OpenWrt) keep this boot: cancel the automatic return to the stock firmware
-#   ./device.sh to-stock DEVICE         (OpenWrt) make the stock firmware slot preferred and reboot into it
+#   ./device.sh trial-commit DEVICE     (OpenWrt, trial image) keep the trial slot: mark it successful, stop the
+#                                       10-minute return to the other slot
+#   ./device.sh set-active DEVICE SLOT  (OpenWrt) boot slot a or b next time (it must be marked successful); then
+#                                       ./device.sh reboot DEVICE
 #   ./device.sh switch DEVICE STAMP     (stock firmware) boot again into out/STAMP, already in the other slot
 #   ./device.sh nv-backup DEVICE        (OpenWrt with modem support) save the NV partitions to out/air6-nv-<time>.tar.gz
 # DEVICE is what ssh accepts, for example root@192.168.1.1. Nothing reboots unless the command says so.
@@ -12,9 +14,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SSH=${AIR6_SSH:-ssh}
 run() { $SSH "$DEV" "$@"; }
-kind() { run '[ -f /lib/upgrade/bootctrl.sh ] && echo stock || { [ -x /usr/sbin/air6-abguard ] && echo openwrt; } || echo other'; }
+kind() {
+	run '[ -f /lib/upgrade/bootctrl.sh ] && echo stock || { [ -x /usr/sbin/air6-slot ] && echo openwrt; } ||
+		{ [ -x /usr/sbin/air6-abguard ] && echo openwrt-old; } || echo other'
+}
+old() { echo "$DEV runs an older OpenWrt image (air6-abguard): use the kit version that built it" >&2; exit 1; }
 need() {
-	[ "$(kind)" = "$1" ] && return 0
+	k=$(kind)
+	[ "$k" = "$1" ] && return 0
+	[ "$1" = openwrt ] && [ "$k" = openwrt-old ] && old
 	[ "$1" = stock ] && echo "$DEV is not running the stock firmware" >&2 || echo "$DEV is not running OpenWrt" >&2
 	exit 1
 }
@@ -26,12 +34,13 @@ stamp() {
 }
 
 cmd=${1:-} DEV=${2:-}
-[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,10p' "$0"; exit 2; }
+[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,12p' "$0"; exit 2; }
 case "$cmd" in
 status)
 	case "$(kind)" in
 	stock) run 'sh -s' < scripts/device/read_ab.sh ;;
-	openwrt) run 'air6-abguard status' ;;
+	openwrt) run 'air6-slot status' ;;
+	openwrt-old) old ;;
 	*) echo "$DEV runs neither the stock firmware nor OpenWrt for the Air 6" >&2; exit 1 ;;
 	esac ;;
 install)
@@ -55,14 +64,15 @@ install)
 reboot)
 	run 'sync; (sleep 1; reboot) >/dev/null 2>&1 &'
 	echo "rebooting" ;;
-confirm)
+trial-commit)
 	need openwrt
-	run 'air6-abguard status; air6-abguard confirm' ;;
-to-stock)
+	run 'air6-slot trial commit' ;;
+set-active)
+	SLOT=${3:-}
+	case "$SLOT" in a|b) ;; *) echo "set-active: SLOT must be a or b" >&2; exit 2 ;; esac
 	need openwrt
-	run 'air6-abguard revert'
-	run 'sync; (sleep 1; reboot) >/dev/null 2>&1 &'
-	echo "rebooting into the stock firmware" ;;
+	run "air6-slot set-active $SLOT"
+	echo "next: ./device.sh reboot $DEV" ;;
 switch)
 	stamp "${3:-}"; need stock
 	run "BOOT_SHA=$(sha boot.img) sh -s" < scripts/device/switch_to_openwrt.sh
@@ -80,5 +90,5 @@ nv-backup)
 	tar -C "$T" -xzf "$OUT" && (cd "$T" && sha256sum -c --quiet SHA256SUMS) || { echo "$OUT is damaged" >&2; exit 1; }
 	echo "NV backup: $OUT ($(stat -c %s "$OUT") bytes; contains device-specific data, keep it private)" ;;
 *)
-	sed -n '2,10p' "$0"; exit 2 ;;
+	sed -n '2,12p' "$0"; exit 2 ;;
 esac

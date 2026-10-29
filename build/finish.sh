@@ -47,6 +47,7 @@ dev=()
 [ -z "$O_CONFIG" ] || dev+=(local-config)
 [ -z "$O_PATCHES" ] || dev+=(kernel-patches)
 [ -z "$O_ALLK" ] || dev+=(all-kmods)
+[ -z "${O_TRIAL:-}" ] || dev+=(trial)
 [ -z "${AIR6_MODEM:-}" ] || dev+=("modem $AIR6_MODEM")
 read -r nfiles flist < "$R/local-files" || nfiles=0
 nfiles=${nfiles:-0}
