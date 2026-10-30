@@ -9,6 +9,14 @@
 #                                       ./device.sh reboot DEVICE
 #   ./device.sh switch DEVICE STAMP     (stock firmware) boot again into out/STAMP, already in the other slot
 #   ./device.sh nv-backup DEVICE        (OpenWrt with modem support) save the NV partitions to out/air6-nv-<time>.tar.gz
+#   ./device.sh stock-backup DEVICE [SLOT]
+#                                       (OpenWrt) save the stock firmware slot SLOT (default: the other slot) to
+#                                       out/stock/air6-stock-<slot>-<time>-<id>.tar, check it, then confirm it on the
+#                                       unit (sysupgrade needs the confirmed backup)
+#   ./device.sh restore-stock DEVICE FILE
+#                                       (OpenWrt) check FILE (from stock-backup), write mcf1, mcf2, boot and rootfs
+#                                       of its slot from it and boot that slot next time as a trial; then
+#                                       ./device.sh reboot DEVICE
 # DEVICE is what ssh accepts, for example root@192.168.1.1. Nothing reboots unless the command says so.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -33,8 +41,97 @@ stamp() {
 	[ "$(tail -n 1 "out/$STAMP/CHECK.txt")" = "RESULT: PASS" ] || { echo "out/$STAMP did not pass the image check" >&2; exit 1; }
 }
 
+# Stock slot archives, as made by air6-stock on the unit (format air6-stock-backup/1; see its header).
+STOCK_PARTS="connsys_gnss md1img md1dsp spmfw pi_img dpm medmcu sspm mcupm lk tee mcf1 mcf2 boot rootfs"
+STOCK_META_KEYS="format backup_id slot unit created stock_version md1img_version"
+STOCK_RUN_RE='^/tmp/air6-stock/run\.[A-Za-z0-9]{6}$'
+# stock_members SLOT: the archive members of SLOT, in archive order.
+stock_members() { local p; printf '%s\n' META SHA256SUMS; for p in $STOCK_PARTS; do echo "${p}_$1.img"; done; }
+# stock_check FILE SLOT DIR: FILE is a complete archive of SLOT (of any one slot when SLOT is empty), extracted into
+# the empty private directory DIR and checked there. Sets A_SLOT, A_ID, A_DIGEST (sha256 of SHA256SUMS). Prints the
+# reason and returns 1 when not. META is parsed, never sourced.
+stock_check() {
+	local f=$1 d=$3 s names m want
+	names=$(LC_ALL=C tar -tf "$f" 2>/dev/null) || { echo "$f: not a complete tar archive" >&2; return 1; }
+	s=$(printf '%s\n' "$names" | sed -n '3s/^connsys_gnss_\([ab]\)\.img$/\1/p')
+	[ -n "$s" ] && [ "$names" = "$(stock_members "$s")" ] ||
+		{ echo "$f: the members are not exactly META, SHA256SUMS and the 15 images of one slot, in order" >&2; return 1; }
+	[ -z "$2" ] || [ "$2" = "$s" ] || { echo "$f: holds slot $s, not slot $2" >&2; return 1; }
+	m=$(LC_ALL=C tar -tvf "$f" 2>/dev/null | cut -c1 | tr -d '\n') || m=
+	[ "$m" = "-----------------" ] || { echo "$f: not every member is a regular file" >&2; return 1; }
+	# shellcheck disable=SC2046 # the member names are fixed words
+	tar -C "$d" -xf "$f" --no-same-owner --no-same-permissions -- $(stock_members "$s") 2>/dev/null ||
+		{ echo "$f: cannot be extracted" >&2; return 1; }
+	[ "$(ls -A "$d" | LC_ALL=C sort)" = "$(stock_members "$s" | LC_ALL=C sort)" ] ||
+		{ echo "$f: extracted something else than its members" >&2; return 1; }
+	for m in $(stock_members "$s"); do
+		[ -f "$d/$m" ] && [ ! -L "$d/$m" ] || { echo "$f: $m is not a regular file" >&2; return 1; }
+	done
+	# SHA256SUMS: "<sha256>  <member>" for META and the 15 images, in archive order, nothing else.
+	LC_ALL=C awk -v slot="$s" -v parts="$STOCK_PARTS" '
+		BEGIN { np = split(parts, P, " "); N[1] = "META"; for (i = 1; i <= np; i++) N[i + 1] = P[i] "_" slot ".img"; total = np + 1 }
+		{
+			if (NR > total) { bad = 1; exit }
+			h = substr($0, 1, 64)
+			if (length(h) != 64 || h ~ /[^0-9a-f]/ || substr($0, 65) != "  " N[NR]) { bad = 1; exit }
+		}
+		END { exit (bad || NR != total) }' "$d/SHA256SUMS" || { echo "$f: SHA256SUMS is malformed" >&2; return 1; }
+	(cd "$d" && sha256sum -c --quiet SHA256SUMS) >&2 || { echo "$f: a member does not match SHA256SUMS" >&2; return 1; }
+	# META: the same rules as air6-stock's meta_check (key order, values, slot).
+	LC_ALL=C awk -v slot="$s" -v keys="$STOCK_META_KEYS" -v parts="$STOCK_PARTS" -v format=air6-stock-backup/1 '
+		function hex(v, n) { return length(v) == n && v !~ /[^0-9a-f]/ }
+		BEGIN {
+			n = split(keys, K, " "); np = split(parts, P, " ")
+			for (i = 1; i <= np; i++) K[n + i] = "size_" P[i] "_" slot
+			total = n + np
+		}
+		{
+			if (NR > total) { bad = 1; exit }
+			eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+			if (eq < 2 || k != K[NR]) { bad = 1; exit }
+			if (k == "format") ok = (v == format)
+			else if (k == "backup_id") ok = hex(v, 32)
+			else if (k == "slot") ok = (v == slot)
+			else if (k == "unit") {
+				ok = (split(v, U, ",") == 4)
+				for (i = 1; i <= 4; i++) if (!hex(U[i], 32)) ok = 0
+				if (length(v) != 131) ok = 0
+			}
+			else if (k == "created") ok = (v ~ /^[0-9]+-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/)
+			else if (k == "stock_version" || k == "md1img_version")
+				ok = (v != "" && length(v) <= 80 && v !~ /[^0-9A-Za-z._+-]/)
+			else ok = (v ~ /^[1-9][0-9]*$/ && length(v) <= 15)
+			if (!ok) { bad = 1; exit }
+		}
+		END { exit (bad || NR != total) }' "$d/META" || { echo "$f: META is malformed or not for slot $s" >&2; return 1; }
+	for m in $STOCK_PARTS; do
+		want=$(sed -n "s/^size_${m}_$s=//p" "$d/META")
+		[ "$(stat -c %s "$d/${m}_$s.img")" = "$want" ] || { echo "$f: ${m}_$s.img is not $want bytes as META says" >&2; return 1; }
+	done
+	A_SLOT=$s
+	A_ID=$(sed -n '2s/^backup_id=//p' "$d/META")
+	A_DIGEST=$(sha256sum < "$d/SHA256SUMS" | cut -c1-64)
+}
+need_stock_tool() {
+	run '[ -x /usr/sbin/air6-stock ]' || { echo "this image has no /usr/sbin/air6-stock (build a newer image with the kit)" >&2; exit 1; }
+}
+# booted: BOOTED = the slot the unit runs from (air6-slot current).
+booted() {
+	BOOTED=$(run 'air6-slot current' || true)
+	case "$BOOTED" in a|b) ;; *) echo "cannot read the booted slot of $DEV (air6-slot current: '$BOOTED')" >&2; exit 1 ;; esac
+}
+# stock_dir: out/stock exists, is a real directory owned by the user and closed to everyone else.
+stock_dir() {
+	[ ! -L out/stock ] || { echo "out/stock is a symbolic link; refusing" >&2; exit 1; }
+	mkdir -p out
+	[ -e out/stock ] || mkdir -m 700 out/stock
+	[ -d out/stock ] && [ ! -L out/stock ] && [ -O out/stock ] ||
+		{ echo "out/stock is not a directory owned by you; refusing" >&2; exit 1; }
+	[ "$(stat -c %a out/stock)" = 700 ] || { echo "out/stock is not private (mode $(stat -c %a out/stock)); chmod 700 out/stock" >&2; exit 1; }
+}
+
 cmd=${1:-} DEV=${2:-}
-[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,12p' "$0"; exit 2; }
+[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,20p' "$0"; exit 2; }
 case "$cmd" in
 status)
 	case "$(kind)" in
@@ -89,6 +186,99 @@ nv-backup)
 	T=$(mktemp -d) && trap 'rm -rf "$T"' EXIT
 	tar -C "$T" -xzf "$OUT" && (cd "$T" && sha256sum -c --quiet SHA256SUMS) || { echo "$OUT is damaged" >&2; exit 1; }
 	echo "NV backup: $OUT ($(stat -c %s "$OUT") bytes; contains device-specific data, keep it private)" ;;
+stock-backup)
+	SLOT=${3:-}
+	case "$SLOT" in ''|a|b) ;; *) echo "stock-backup: SLOT must be a or b" >&2; exit 2 ;; esac
+	need openwrt; need_stock_tool; booted
+	if [ -z "$SLOT" ]; then [ "$BOOTED" = a ] && SLOT=b || SLOT=a; fi
+	[ "$SLOT" != "$BOOTED" ] || { echo "slot $SLOT is the booted slot; back up the other slot" >&2; exit 1; }
+	# The archive holds unit-specific data: private from the moment it is created.
+	umask 077
+	stock_dir
+	RECV= XD=
+	trap 'rm -rf -- ${RECV:+"$RECV"} ${XD:+"$XD"}' EXIT
+	trap 'exit 130' INT; trap 'exit 143' TERM HUP
+	RECV=$(mktemp out/stock/.receive.XXXXXX)
+	XD=$(mktemp -d out/stock/.check.XXXXXX)
+	echo "reading slot $SLOT of $DEV (15 partitions)"
+	rc=0; run "air6-stock backup $SLOT -" > "$RECV" || rc=$?
+	[ "$rc" = 0 ] || { echo "backup failed (rc $rc); nothing saved, not confirmed" >&2; exit 1; }
+	H=$(sha256sum < "$RECV" | cut -c1-64)
+	stock_check "$RECV" "$SLOT" "$XD" || { echo "the received archive failed the checks; nothing saved, not confirmed" >&2; exit 1; }
+	rm -rf -- "$XD"; XD=
+	OUT=out/stock/air6-stock-$SLOT-$(date +%Y%m%d-%H%M%S)-${A_ID:0:8}.tar
+	# A hard link never replaces an existing file.
+	ln -- "$RECV" "$OUT" 2>/dev/null || { echo "cannot save $OUT (exists already?); nothing saved, not confirmed" >&2; exit 1; }
+	rm -f -- "$RECV"; RECV=
+	chmod 600 "$OUT"
+	sync
+	if [ "$(sha256sum < "$OUT" | cut -c1-64)" != "$H" ]; then
+		rm -f -- "$OUT"
+		echo "$OUT does not read back as received; removed, not confirmed" >&2
+		exit 1
+	fi
+	echo "saved $OUT"
+	echo "  slot $SLOT, backup_id $A_ID"
+	echo "  digest $A_DIGEST"
+	echo "  $(stat -c %s "$OUT") bytes"
+	echo "The file holds unit-specific data: keep it private and keep a safe copy. A confirmed backup on the unit does not"
+	echo "prove that this file still exists."
+	rc=0; run "air6-stock confirm $SLOT $A_ID $A_DIGEST" || rc=$?
+	if [ "$rc" != 0 ]; then
+		echo "the backup is NOT confirmed on the unit (rc $rc): sysupgrade refuses to overwrite slot $SLOT until it is." >&2
+		echo "The file is kept. Retry the confirm (repeating it is safe):" >&2
+		echo "  ssh $DEV air6-stock confirm $SLOT $A_ID $A_DIGEST" >&2
+		exit 1
+	fi
+	echo "confirmed on the unit" ;;
+restore-stock)
+	FILE=${3:-}
+	[ -n "$FILE" ] || { echo "restore-stock: FILE missing (an archive from stock-backup)" >&2; exit 2; }
+	[ -f "$FILE" ] || { echo "$FILE is not a file" >&2; exit 1; }
+	need openwrt; need_stock_tool
+	umask 077
+	XD=
+	trap 'rm -rf -- ${XD:+"$XD"}' EXIT
+	trap 'exit 130' INT; trap 'exit 143' TERM HUP
+	XD=$(mktemp -d)
+	stock_check "$FILE" "" "$XD" || { echo "$FILE failed the checks; nothing sent to the unit" >&2; exit 1; }
+	S=$A_SLOT
+	booted
+	[ "$S" != "$BOOTED" ] ||
+		{ echo "$FILE is a backup of slot $S, the booted slot; boot the other slot first (nothing sent to the unit)" >&2; exit 1; }
+	echo "$FILE: backup $A_ID of slot $S ($(sed -n '5s/^created=//p' "$XD/META"), stock $(sed -n '6s/^stock_version=//p' "$XD/META")) checked"
+	DIR=$(run 'air6-stock stage') || { echo "air6-stock stage failed; nothing changed" >&2; exit 1; }
+	# The path goes into remote commands: only the exact form that stage makes.
+	[[ $DIR =~ $STOCK_RUN_RE ]] || { echo "unexpected run directory from air6-stock stage: $(printf %q "$DIR"); nothing changed" >&2; exit 1; }
+	for m in META SHA256SUMS "mcf1_$S.img" "mcf2_$S.img" "boot_$S.img" "rootfs_$S.img"; do
+		echo "uploading $m"
+		run "cat > '$DIR/$m'" < "$XD/$m" ||
+			{ echo "uploading $m failed; nothing written (the run directory $DIR on the unit is left unused)" >&2; exit 1; }
+	done
+	rc=0; run "air6-stock restore $S '$DIR'" || rc=$?
+	if [ "$rc" = 255 ]; then
+		echo "the SSH connection failed during the restore; asking the unit for the result of $DIR" >&2
+		rrc=0; res=$(run "air6-stock result '$DIR'") || rrc=$?
+		[ -z "$res" ] || printf '%s\n' "$res"
+		st=$(printf '%s\n' "$res" | sed -n '/^state=/{s///p;q;}')
+		r=$(printf '%s\n' "$res" | sed -n '/^rc=/{s///p;q;}')
+		case "$r" in ''|*[!0-9]*) r=x ;; esac
+		case "$rrc:$st:$r" in
+		0:done:0|0:failed:[0-9]*|0:refused:[0-9]*) rc=$r ;;
+		*)
+			echo "the outcome is not known yet (result rc $rrc). Ask again later, before anything else on that slot:" >&2
+			echo "  ssh $DEV air6-stock result $DIR" >&2 ;;
+		esac
+	fi
+	case "$rc" in
+	0)
+		echo "slot $S is the next boot slot as a trial: the restored stock gets two boots (retry 02); if it does not come"
+		echo "up, the preloader returns to slot $BOOTED"
+		echo "next: ./device.sh reboot $DEV" ;;
+	3|4|5) echo "restore not done (rc $rc): nothing was written" >&2 ;;
+	6) echo "restore failed after a write was started (rc 6): slot $S stays unsuccessful; run restore-stock again" >&2 ;;
+	esac
+	exit "$rc" ;;
 *)
-	sed -n '2,12p' "$0"; exit 2 ;;
+	sed -n '2,20p' "$0"; exit 2 ;;
 esac

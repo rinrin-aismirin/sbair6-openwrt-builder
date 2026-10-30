@@ -35,6 +35,7 @@ has() { if echo "$LIST" | grep -q -E "$1"; then ok "rootfs: $2"; else ng "rootfs
 	rm -rf "$T"
 	if LIST=$(unsquashfs -lls "$D/rootfs.img" 2>/dev/null); then
 		has "^-rwx.* squashfs-root/usr/sbin/air6-slot$" "/usr/sbin/air6-slot (executable)"
+		has "^-rwx.* squashfs-root/usr/sbin/air6-stock$" "/usr/sbin/air6-stock (executable)"
 		has "^-.* squashfs-root/lib/air6/bootctrl.sh$" "/lib/air6/bootctrl.sh"
 		has "^-rwx.* squashfs-root/etc/init.d/air6-slot$" "/etc/init.d/air6-slot (executable)"
 		has "^l.* squashfs-root/etc/rc.d/S99air6-slot -> ../init.d/air6-slot$" "/etc/rc.d/S99air6-slot enabled"
