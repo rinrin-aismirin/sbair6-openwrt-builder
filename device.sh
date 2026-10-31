@@ -276,7 +276,11 @@ restore-stock)
 		echo "up, the preloader returns to slot $BOOTED"
 		echo "next: ./device.sh reboot $DEV" ;;
 	3|4|5) echo "restore not done (rc $rc): nothing was written" >&2 ;;
-	6) echo "restore failed after a write was started (rc 6): slot $S stays unsuccessful; run restore-stock again" >&2 ;;
+	6)
+		echo "restore stopped after a change was started (rc 6). Before anything else, read its outcome lines above (also" >&2
+		echo "shown by: ssh $DEV air6-stock result $DIR) and check ./device.sh status $DEV." >&2
+		echo "Run restore-stock again only if the outcome says slot $S stays unsuccessful (not selectable) or that the boot" >&2
+		echo "control record is unchanged." >&2 ;;
 	esac
 	exit "$rc" ;;
 *)

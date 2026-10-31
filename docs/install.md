@@ -228,6 +228,49 @@ A unit that runs an image built with an earlier version of this kit has `air6-ab
 the current `device.sh` refuses it. Go back with `ssh root@192.168.1.1 air6-abguard revert` and
 `ssh root@192.168.1.1 reboot` (what the earlier kit's `to-stock` did), then install a new build.
 
+### Backing up the stock slot
+
+The way back above needs the stock firmware in the other slot. Once something overwrites that slot (a later
+OpenWrt update, sysupgrade, will; it is not in the kit yet), the stock firmware can only come back from a backup.
+Take it from OpenWrt:
+
+    ./device.sh stock-backup root@192.168.1.1
+
+It reads the 15 partitions of the other slot, checks what it received, saves it as
+`out/stock/air6-stock-<slot>-<time>-<id>.tar` and then confirms the backup on the unit. When it worked, the output
+ends with `confirmed on the unit`. If it says the backup is NOT confirmed, the file is kept; run the
+`ssh ... air6-stock confirm ...` line it prints.
+
+- Take it before anything overwrites the last slot that holds the stock firmware. sysupgrade, once it exists, will
+  refuse to write that slot without a confirmed backup that still matches it.
+- Take it again after every boot of the stock firmware. The stock firmware changes its `mcf1` and `mcf2` partitions
+  when it runs, and the check then refuses the older backup.
+- Keep the file private and keep a safe copy. It holds data specific to your unit, and the unit cannot make it again
+  once the stock slot is overwritten. The confirmation on the unit only records that the kit checked and saved the
+  file; it does not prove that the file still exists.
+
+### Restoring the stock slot from the backup
+
+From OpenWrt running in the other slot than the backup's (the file records its slot):
+
+    ./device.sh restore-stock root@192.168.1.1 out/stock/air6-stock-<slot>-<time>-<id>.tar
+    ./device.sh reboot root@192.168.1.1
+
+`restore-stock` writes only `mcf1`, `mcf2`, `boot` and `rootfs` of that slot, from the file. Before writing, it
+refuses when the slot's other 11 partitions (modem and bootloader firmware among them; never written) differ from the
+backup, when the backup is from another unit, or when OpenWrt's own slot is not marked good (with a trial image, run
+`./device.sh trial-commit` first). It does not reboot; when it worked, the output ends with `next: ./device.sh reboot ...`.
+
+After the reboot the restored stock firmware gets two tries; if it does not come up, the unit returns to the OpenWrt
+slot. It comes back with the settings it had when the backup was taken (for example the SIM lock), not later ones.
+OpenWrt stays in its slot ([Booting the same OpenWrt again](#booting-the-same-openwrt-again)).
+
+What has been tried: on 2026-10-30, on one unit, a backup and a restore of the same bytes into a slot that still held
+the stock firmware worked, and the restored stock firmware booted. Going back after OpenWrt has overwritten the stock
+slot has not been tried yet.
+
+If the restore stops, see [The stock restore stops](#the-stock-restore-stops).
+
 ## Booting the same OpenWrt again
 
 From the stock firmware, without installing again:
@@ -263,6 +306,29 @@ If the command ends in any other way (the connection drops, an SSH error, no `in
 reboot. Keep the output, run `./device.sh status root@DEVICE`, and compare the bytes with the ones before the
 install. If they are unchanged, run the install again. If they changed, the next boot may try the half-written slot;
 use the `rollback` line if it was printed.
+
+### The stock restore stops
+
+`./device.sh restore-stock` exits with the restore's exit code (also shown as `rc N`):
+
+- 3, 4 or 5 (`restore not done`): refused, busy or a read error. Nothing was written.
+- 6 (`restore stopped after a change was started`): a write was started, but the restore did not end normally.
+  Do not rerun it straight away. Read the `outcome:` lines (also shown by
+  `ssh root@192.168.1.1 air6-stock result DIR`, unless the output says the result could not be saved) and run
+  `./device.sh status root@192.168.1.1`:
+  - `slot X stays unsuccessful (not selectable)`: the slot may be partly written, but neither `set-active` nor the
+    LEVEL key selects it. Run `restore-stock` again with the same file.
+  - `the boot control record is unchanged`: nothing selects the slot either; run `restore-stock` again.
+  - `slot X was activated`: the slot was restored and boots next; only the end failed (for example the result
+    could not be saved, or the update reservation remains, which keeps `set-active` refused until a reboot).
+    Reboot with `./device.sh reboot root@192.168.1.1` as after a restore that worked.
+  - `the next boot slot is uncertain`: do not reboot before the status shows which slot boots next and whether it is
+    marked good.
+- If the SSH connection drops during the restore, the kit asks the unit for the outcome itself. When it cannot, it
+  prints the command to ask later, `ssh root@192.168.1.1 air6-stock result DIR` (with the directory it printed).
+
+While a backup or a restore runs, `set-active` is refused ("an update of the other slot is in progress"). If one was
+interrupted, `set-active`, `stock-backup` and `restore-stock` stay refused until the next reboot.
 
 ### OpenWrt starts but you cannot reach it
 
