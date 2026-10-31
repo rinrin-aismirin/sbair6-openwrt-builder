@@ -21,6 +21,11 @@ has() { if echo "$LIST" | grep -q -E "$1"; then ok "rootfs: $2"; else ng "rootfs
 	# Trial images carry the token air6.trial=1 in the DTB's /chosen/bootargs (build option --trial), as air6-slot reads
 	# it from the kernel command line; dtb_bootargs.py walks the FDT for that value.
 	policy=$(python3 -I "$HERE/dtb_bootargs.py" "$D/boot.img")
+	# LK replaces exactly root=/dev/mmcblk0p24 with the booted slot's rootfs (p26 on a, p39 on b); any other value
+	# boots the same rootfs from both slots.
+	root=$(python3 -I "$HERE/dtb_bootargs.py" --root "$D/boot.img")
+	[ "$root" = /dev/mmcblk0p24 ] && ok "boot.img DT root=$root (LK picks the slot's rootfs)" ||
+		ng "boot.img DT root=$root, must be /dev/mmcblk0p24 (the value LK replaces per slot)"
 	if [ -f "$D/PROVENANCE" ]; then
 		grep -q '^options: .*--trial' "$D/PROVENANCE" && want=trial || want=normal
 		[ "$policy" = "$want" ] && ok "boot.img policy $policy (as built)" || ng "boot.img policy $policy, but the build asked for $want"
@@ -37,6 +42,8 @@ has() { if echo "$LIST" | grep -q -E "$1"; then ok "rootfs: $2"; else ng "rootfs
 		has "^-rwx.* squashfs-root/usr/sbin/air6-slot$" "/usr/sbin/air6-slot (executable)"
 		has "^-rwx.* squashfs-root/usr/sbin/air6-stock$" "/usr/sbin/air6-stock (executable)"
 		has "^-.* squashfs-root/lib/air6/bootctrl.sh$" "/lib/air6/bootctrl.sh"
+		has "^-.* squashfs-root/lib/air6/upgrade.sh$" "/lib/air6/upgrade.sh (sysupgrade)"
+		has "^-.* squashfs-root/lib/upgrade/platform.sh$" "/lib/upgrade/platform.sh (sysupgrade)"
 		has "^-rwx.* squashfs-root/etc/init.d/air6-slot$" "/etc/init.d/air6-slot (executable)"
 		has "^l.* squashfs-root/etc/rc.d/S99air6-slot -> ../init.d/air6-slot$" "/etc/rc.d/S99air6-slot enabled"
 		has "^-rwx.* squashfs-root/etc/init.d/air6-slot-trial$" "/etc/init.d/air6-slot-trial (executable)"
@@ -68,6 +75,14 @@ has() { if echo "$LIST" | grep -q -E "$1"; then ok "rootfs: $2"; else ng "rootfs
 			ok "rootfs: air6-slot-trial init START=11" || ng "rootfs: air6-slot-trial init START"
 	else
 		ng "rootfs.img is not a readable squashfs"
+	fi
+	# The sysupgrade package must carry exactly this boot.img and rootfs.img, the same policy and modem version.
+	if [ -f "$D/sysupgrade.bin" ]; then
+		mv=
+		[ -f "$D/MODEM_VERSION" ] && mv=$(sed -n 's/^rootfs=.*_\(V[0-9]*_[0-9]*_P[0-9]*\)$/\1/p' "$D/MODEM_VERSION")
+		python3 -I "$HERE/check_sysupgrade.py" "$D" "$policy" "$mv" || fail=1
+	else
+		ng "sysupgrade.bin missing"
 	fi
 	[ "$fail" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"
 } 2>&1 | tee "$D/CHECK.txt"

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Print the image policy (trial or normal) from /chosen/bootargs of the Air 6 DTB inside a boot image.
 
-Usage: dtb_bootargs.py BOOT_IMG
+Usage: dtb_bootargs.py BOOT_IMG          print the policy
+       dtb_bootargs.py --root BOOT_IMG   print the value of the single root= token of the same bootargs
 Every flattened device tree in the file (magic d00dfeed with a consistent header) is walked; the policy comes from
 the /chosen/bootargs value that holds the token air6_dt_bootargs=1. It is "trial" when that value also holds the
 token air6.trial=1 (as air6-slot reads it from the kernel command line), else "normal". Exit status 0 and one of
@@ -58,7 +59,11 @@ def chosen_bootargs(blob):
 
 
 def main():
-    data = open(sys.argv[1], "rb").read()
+    args = sys.argv[1:]
+    want_root = args[:1] == ["--root"]
+    if want_root:
+        args = args[1:]
+    data = open(args[0], "rb").read()
     values, i = [], data.find(struct.pack(">I", FDT_MAGIC))
     while i >= 0:
         try:
@@ -71,6 +76,13 @@ def main():
     if len(values) != 1:
         print("unknown: %d DTBs with /chosen/bootargs holding %s" % (len(values), MARKER.decode()))
         return 1
+    if want_root:
+        roots = [t[5:].decode(errors="replace") for t in values[0].split() if t.startswith(b"root=")]
+        if len(roots) != 1:
+            print("unknown: %d root= tokens" % len(roots))
+            return 1
+        print(roots[0])
+        return 0
     print("trial" if TRIAL in values[0].split() else "normal")
     return 0
 

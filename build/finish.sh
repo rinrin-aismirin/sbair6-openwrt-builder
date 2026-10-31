@@ -1,7 +1,8 @@
 #!/bin/bash
 # Pack the Android boot v2 image, sign it with the MediaTek (MTK) sign_flow from the LG6851F tree (MT6990 SDK test keys, Python 3.10), pad both
-# images to their partition sizes, write SHA256SUMS, PACKAGES.sha256 and PROVENANCE, keep the build's packages, run the
-# image check.
+# images to their partition sizes, write SHA256SUMS, PACKAGES.sha256 and PROVENANCE, keep the build's packages, build
+# the sysupgrade package (sysupgrade.bin: the signed boot image and the squashfs, with fwtool metadata; its sha256 is
+# added to SHA256SUMS), run the image check.
 # Usage (in the builder container): build/finish.sh OPENWRT_TREE LG6851F_EXTERNALS_DIR OUT_DIR FORK_COMMIT
 # OUT_DIR exists (created by build-in-container.sh for this build). Env: R (record fragments), P (private records), and
 # the variables build-in-container.sh got from build.sh (RUN_ID, RUN_TOKEN, FORK_LOCK_COMMIT, O_*, KIT_START, ...).
@@ -139,4 +140,18 @@ fw_origin() { if [ -f "$R/firmware-replaced" ] && grep -q -x -F "$1" "$R/firmwar
 	echo "This record says what went into the build. It does not say that the image works, that it equals another"
 	echo "build, or that any file here may be passed on (local/files and stock files can be inside the images)."
 } > "$OUT/PROVENANCE"
-"$K/scripts/check_image.sh" "$OUT" "$X"
+# sysupgrade.bin (format: /lib/air6/upgrade.sh in the fork, build/make_sysupgrade.py). The kit commit is recorded only
+# when the kit inputs did not change during the build.
+trial=0; [ -z "${O_TRIAL:-}" ] || trial=1
+modem_v=
+[ -z "${AIR6_MODEM:-}" ] || modem_v=$(sed -n 's/^rootfs=.*_\(V[0-9]*_[0-9]*_P[0-9]*\)$/\1/p' "$R/modem-version")
+kit_c=none
+[ "$kit_end" = "$KIT_START" ] && [ -z "$KIT_START" ] && [ "$kit_rev" = "$KIT_HEAD_START" ] && kit_c=$kit_rev
+python3 -I "$K/build/make_sysupgrade.py" "$OUT/sysupgrade.bin" "$OUT/boot.img" "$OUT/rootfs.img" \
+	"$FORK_COMMIT" "$kit_c" "$trial" "$modem_v"
+printf '{"metadata_version":"1.1","compat_version":"1.0","supported_devices":["softbank,air6"],"version":{"dist":"OpenWrt","target":"mediatek/mt6990","board":"softbank_air6","fork":"%s"}}\n' \
+	"$FORK_COMMIT" > "$OUT/sysupgrade.meta.json"
+"$T/staging_dir/host/bin/fwtool" -I "$OUT/sysupgrade.meta.json" "$OUT/sysupgrade.bin"
+rm -f "$OUT/sysupgrade.meta.json"
+(cd "$OUT" && sha256sum sysupgrade.bin >> SHA256SUMS)
+FWTOOL="$T/staging_dir/host/bin/fwtool" "$K/scripts/check_image.sh" "$OUT" "$X"

@@ -9,7 +9,8 @@ if [ "${2:-}" = --docs ]; then
 	PATHS=(README.md docs)
 else
 	# Everything a build reads from the kit, except local/ (the owner's inputs, recorded separately).
-	PATHS=(build.sh build config scripts/check_image.sh scripts/dtb_bootargs.py scripts/resign_boot.py feed docker
+	PATHS=(build.sh build config scripts/check_image.sh scripts/check_sysupgrade.py scripts/dtb_bootargs.py
+		scripts/resign_boot.py feed docker
 		fork.lock externals.lock stock-firmware.lock modem-files.lock)
 fi
 git -c safe.directory="$K" -C "$K" status --porcelain=v1 -z --untracked-files=all -- "${PATHS[@]}" |
