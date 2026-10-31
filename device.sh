@@ -251,7 +251,11 @@ upgrade-check)
 			exit 1
 		fi ;;
 	refused|failed)
-		echo "result: $state - nothing was activated; slot $booted (the old one) stays. The record lines above say why."
+		# The status above shows only the record's last line; the error lines of this request are in the full record.
+		echo "--- record of this request (/etc/air6-slot/last-upgrade):"
+		printf '%s\n' "$lu" | sed -n "/ boot_id=$(val boot_id)\( \|\$\)/,\$p"
+		echo "result: $state - nothing was activated; slot $booted (the old one) stays. The msg=error lines of the record"
+		echo "above say why; a reason that is not among them was printed only on the unit's console during the update."
 		exit 1 ;;
 	*)
 		echo "result: UNKNOWN - the record of this request is incomplete (state '${state:-none}')"

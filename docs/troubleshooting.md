@@ -148,8 +148,10 @@ Nothing was activated: the old slot is still the next boot slot, and a partly wr
 - "refused": nothing was written.
 - "failed": a write was started (or may have been) and the run did not finish.
 
-The status shows the end line of the record (`state=`, `phase=`, `last=`). The whole record, including the lines with
-`msg=error` that name the step that failed (spaces appear as `_`), is in a file on the unit:
+The status shows the end line of the record (`state=`, `phase=`, `last=`). `upgrade-check` prints the whole record of
+the request above its result line, including the lines with `msg=error` that name the step that failed (spaces appear
+as `_`). A reason that is not among them was printed only on the unit's console during the update. The record is also
+in a file on the unit:
 
     ssh root@192.168.1.1 cat /etc/air6-slot/last-upgrade
 
