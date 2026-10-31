@@ -24,9 +24,11 @@ one and never writes the stock firmware's slot, so the stock firmware stays as t
 
 Read these before you decide to install:
 
-- **No updates that keep your settings.** To move to a new build, go back to the stock firmware and install again
-  ([updating](docs/install.md#updating-to-a-new-build)); your OpenWrt settings and added packages are lost, so note
-  or back them up first.
+- **Updates write the other slot, and the first one overwrites the stock firmware.** `./device.sh upgrade` (OpenWrt's
+  sysupgrade) keeps your settings and writes the slot OpenWrt is not running from, so OpenWrt then alternates between
+  the two slots. The first update therefore replaces the stock firmware; it refuses to do so without a confirmed
+  backup of the stock slot, and the way back to the stock firmware is then that backup
+  ([updating](docs/install.md#updating-to-a-new-build)). sysupgrade is new: tried on one unit on one day.
 - **A stock firmware update overwrites OpenWrt.** When the stock firmware updates itself, it writes the slot it is
   not running from, which is the OpenWrt slot. (Read from the stock update script; not observed.)
 - **The 5G/LTE modem is off** in the default build (without modem support): the unit works as a router or access point with a wired internet
@@ -49,6 +51,8 @@ an access point.
 | Area | Tested | Not tested |
 | --- | --- | --- |
 | Install and boot | Install from the stock firmware on slot A; boot; return to the stock firmware by the bootloader after failed boots | Installing from a unit whose stock firmware runs from slot B |
+| Updates (sysupgrade) | `./device.sh upgrade` both ways (B to A over the stock firmware, A to B); OpenWrt booting from slot A; settings carried over; an uncommitted trial image returning by its timer and by the bootloader after failed starts (recorded under "failed updates"); stopping without a reboot when the boot control bytes are uncertain (on a dry run) | Running many updates in a row; a power cut during an update |
+| Going back to the stock firmware | A backup of the stock slot, and restoring it after OpenWrt had overwritten that slot: the stock firmware started and its modem found the SIM (it did not register with the SIM used, as before the overwrite: its APNs are SoftBank's) | Mobile data on the restored stock firmware |
 | Keeping and leaving OpenWrt | Slot marked good at the end of start-up, staying across reboots; switching slots by holding the LEVEL key at power-on; failsafe mode with the WPS key. On an earlier build, before later fixes to the timer and the key handling: a trial image returning after 10 minutes, failsafe with the RESET key (the current timer code is tested on the host only) | Reaching failsafe mode (192.168.1.1) from a computer; the LEVEL key's error cases |
 | Ethernet | Both jacks on the internal switch at 1 Gbit/s, traffic in both directions, a cable replug | |
 | Wi-Fi (stock firmware files) | 2.4, 5 and 6 GHz bands present; one access point on 5 + 6 GHz (MLO, WPA3) with a Wi-Fi 7 phone at 80 MHz: about 925 Mbit/s from the phone, 760-790 Mbit/s to it (iperf3) | 2.4 GHz with a client; 160 MHz channels |
@@ -58,9 +62,6 @@ an access point.
 
 Not supported:
 
-- `sysupgrade` (updates that keep settings).
-- OpenWrt in both slots: always keep the stock firmware in one slot, it is the only way back. The install refuses to
-  run unless the stock firmware is running, so it never writes the stock firmware's own slot.
 - Recovery without the stock firmware: no working serial-console recovery procedure.
 - Over-current protection on the USB port (not ported).
 - The modem in the default build (optional build: [docs/modem.md](docs/modem.md)).

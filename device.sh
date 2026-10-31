@@ -2,6 +2,13 @@
 # Run on your computer: works on the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh"). See docs/install.md.
 #   ./device.sh status DEVICE           show the booted slot, the boot control bytes and (OpenWrt) the trial timer
 #   ./device.sh install DEVICE STAMP    (stock firmware) upload out/STAMP and install it into the other slot
+#   ./device.sh upgrade DEVICE STAMP [--no-config]
+#                                       (OpenWrt) sysupgrade to out/STAMP: write it into the other slot, keeping the
+#                                       settings unless --no-config, and reboot into it. Overwriting a slot that holds
+#                                       the stock firmware needs a confirmed stock-backup of it
+#   ./device.sh upgrade-check DEVICE STAMP
+#                                       (OpenWrt, after the reboot) compare the unit's sysupgrade record with the last
+#                                       upgrade request for out/STAMP
 #   ./device.sh reboot DEVICE           reboot the unit
 #   ./device.sh trial-commit DEVICE     (OpenWrt, trial image) keep the trial slot: mark it successful, stop the
 #                                       10-minute return to the other slot
@@ -131,7 +138,7 @@ stock_dir() {
 }
 
 cmd=${1:-} DEV=${2:-}
-[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,20p' "$0"; exit 2; }
+[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,27p' "$0"; exit 2; }
 case "$cmd" in
 status)
 	case "$(kind)" in
@@ -158,6 +165,95 @@ install)
 	run 'cat > /tmp/air6-rootfs.img' < "out/$STAMP/rootfs.img"
 	run "BOOT_SHA=$(sha boot.img) ROOTFS_SHA=$(sha rootfs.img) sh -s" < scripts/device/install_openwrt.sh
 	echo "installed; next: ./device.sh reboot $DEV" ;;
+upgrade)
+	stamp "${3:-}"
+	case "${4:-}" in '') KEEP= ;; --no-config) KEEP=-n ;; *) echo "upgrade: unknown option ${4}" >&2; exit 2 ;; esac
+	need openwrt
+	[ -f "out/$STAMP/sysupgrade.bin" ] || { echo "out/$STAMP/sysupgrade.bin not found (built by kits from this version on)" >&2; exit 1; }
+	run '[ -f /lib/air6/upgrade.sh ]' || { echo "$DEV runs an image without sysupgrade support: install the new build from the stock firmware once" >&2; exit 1; }
+	h=$(sha sysupgrade.bin)
+	# One private upload file per request: the check and the run use exactly the file this request uploaded.
+	rp=$(run 'mktemp /tmp/air6-sysupgrade.XXXXXX') || { echo "cannot create an upload file on the unit" >&2; exit 1; }
+	case "$rp" in /tmp/air6-sysupgrade.??????) ;; *) echo "unexpected upload path '$rp'" >&2; exit 1 ;; esac
+	echo "uploading sysupgrade.bin to $rp"
+	run "cat > $rp" < "out/$STAMP/sysupgrade.bin"
+	got=$(run "sha256sum $rp" | cut -d' ' -f1)
+	[ "$got" = "$h" ] || { echo "upload damaged (sha256 $got, expected $h)" >&2; exit 1; }
+	# The unit checks the package and its own state; nothing is written when this fails.
+	run "sysupgrade -T $KEEP $rp" || { run "rm -f $rp"; echo "the unit refused the package (see above); nothing was written" >&2; exit 1; }
+	bid=$(run 'cat /proc/sys/kernel/random/boot_id')
+	slot=$(run 'air6-slot current')
+	req=out/$STAMP/upgrade-request-$(date +%Y%m%d-%H%M%S)
+	printf 'device=%s\nboot_id=%s\nfrom=%s\nimage=%s\nconfig=%s\n' "$DEV" "$bid" "$slot" "$h" "${KEEP:-keep}" > "$req"
+	run "(sleep 1; sysupgrade $KEEP $rp) </dev/null >/dev/null 2>&1 &"
+	echo "sysupgrade request sent (request recorded in $req). Whether the unit admitted it shows in its record."
+	echo "The unit stops its services, writes slot $( [ "$slot" = a ] && echo b || echo a ) and reboots into it (1 to 3 minutes)."
+	echo "Then run: ./device.sh upgrade-check $DEV $STAMP"
+	echo "If it does not come back and the power LED blinks red, see docs/install.md (sysupgrade stopped)." ;;
+upgrade-check)
+	stamp "${3:-}"
+	need openwrt
+	req=$(ls -1 out/$STAMP/upgrade-request-* 2>/dev/null | tail -n 1)
+	[ -n "$req" ] || { echo "no upgrade request recorded for out/$STAMP" >&2; exit 1; }
+	val() { sed -n "s/^$1=//p" "$req"; }
+	lu=$(run 'cat /etc/air6-slot/last-upgrade 2>/dev/null' || true)
+	booted=$(run 'air6-slot current')
+	# The root file system must be the booted slot's rootfs (an image with another root= in its DT boots the same
+	# rootfs from both slots).
+	rootc=$(run '. /lib/air6/bootctrl.sh; bc_init >/dev/null 2>&1 || exit 2; bc_root_check' 2>&1; echo "rc=$?")
+	run 'air6-slot status'
+	echo "--- request $req: from slot $(val from), boot $(val boot_id), image $(val image)"
+	begin=$(printf '%s\n' "$lu" | grep ' phase=begin ' | head -n 1)
+	endl=$(printf '%s\n' "$lu" | grep ' end=1 ' | tail -n 1)
+	if [ -z "$begin" ] || ! printf '%s\n' "$begin" | grep -q " boot_id=$(val boot_id)\( \|$\)"; then
+		# No record of this request on the running slot (the record is kept by the slot that boots after stage2: if
+		# that was the new slot and the unit came back, the record is there; a cold boot loses it). What the boot
+		# control bytes, shared by both slots, still show:
+		st=$(run 'air6-slot status')
+		tgt=$( [ "$(val from)" = a ] && echo b || echo a )
+		tline=$(printf '%s\n' "$st" | grep "^slot $tgt: ")
+		tsucc=$(printf '%s\n' "$tline" | sed -n 's/.* success=\([0-9a-f]*\).*/\1/p')
+		tretry=$(printf '%s\n' "$tline" | sed -n 's/.* retry=\([0-9a-f]*\).*/\1/p')
+		echo "result: UNKNOWN - the unit has no record of this request. Booted slot now: $booted."
+		if [ "$booted" = "$(val from)" ] && [ "$tsucc" = 00 ]; then
+			if printf '%s\n' "$st" | grep -q " slot=$tgt .* success=00"; then
+				echo "inferred from the boot control bytes: slot $tgt is not marked good and is listed under 'failed updates'"
+				echo "(the bootloader gave up on it after failed starts). That entry may also be from an earlier attempt."
+			elif [ "$tretry" != 00 ]; then
+				echo "inferred from the boot control bytes: slot $tgt was started (retry $tretry) but not kept (a trial image"
+				echo "not committed, a manual switch back, or a failed start); its sysupgrade record is in slot $tgt's settings."
+			else
+				echo "inferred from the boot control bytes: slot $tgt is not marked good; whether it was started is unknown."
+			fi
+		elif [ "$booted" != "$(val from)" ]; then
+			echo "inferred: the unit runs slot $booted, not the slot the request came from; the record was lost (a cold"
+			echo "boot?). Check the status above (root=, marked good) before relying on it."
+		fi
+		exit 1
+	fi
+	state=$(printf '%s\n' "$endl" | sed -n 's/.* state=\([a-z]*\).*/\1/p')
+	img=$(printf '%s\n' "$endl" | sed -n 's/.* image=\([0-9a-f]*\).*/\1/p')
+	case "$state" in
+	written)
+		[ "$img" = "$(val image)" ] || { echo "result: MISMATCH - the record's image $img is not the requested one"; exit 1; }
+		if [ "$booted" != "$(val from)" ] && [ "${rootc##*rc=}" != 0 ]; then
+			echo "result: written, the unit booted slot $booted, but its root file system is not rootfs_$booted"
+			echo "(${rootc%rc=*}); the image's device tree root= is wrong. Do not upgrade again from this state."
+			exit 1
+		elif [ "$booted" != "$(val from)" ]; then
+			echo "result: written, and the unit runs the new slot $booted on rootfs_$booted (it is marked good once start-up has finished: see status)"
+		else
+			echo "result: written, but the unit runs the old slot $booted again: the new slot did not finish starting twice"
+			echo "and the bootloader returned (see 'failed updates' in the status above)"
+			exit 1
+		fi ;;
+	refused|failed)
+		echo "result: $state - nothing was activated; slot $booted (the old one) stays. The record lines above say why."
+		exit 1 ;;
+	*)
+		echo "result: UNKNOWN - the record of this request is incomplete (state '${state:-none}')"
+		exit 1 ;;
+	esac ;;
 reboot)
 	run 'sync; (sleep 1; reboot) >/dev/null 2>&1 &'
 	echo "rebooting" ;;
@@ -284,5 +380,5 @@ restore-stock)
 	esac
 	exit "$rc" ;;
 *)
-	sed -n '2,20p' "$0"; exit 2 ;;
+	sed -n '2,27p' "$0"; exit 2 ;;
 esac

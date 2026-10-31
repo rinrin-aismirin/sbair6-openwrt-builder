@@ -230,8 +230,8 @@ the current `device.sh` refuses it. Go back with `ssh root@192.168.1.1 air6-abgu
 
 ### Backing up the stock slot
 
-The way back above needs the stock firmware in the other slot. Once something overwrites that slot (a later
-OpenWrt update, sysupgrade, will; it is not in the kit yet), the stock firmware can only come back from a backup.
+The way back above needs the stock firmware in the other slot. Once something overwrites that slot (the first
+`./device.sh upgrade` does), the stock firmware can only come back from a backup.
 Take it from OpenWrt:
 
     ./device.sh stock-backup root@192.168.1.1
@@ -241,8 +241,8 @@ It reads the 15 partitions of the other slot, checks what it received, saves it 
 ends with `confirmed on the unit`. If it says the backup is NOT confirmed, the file is kept; run the
 `ssh ... air6-stock confirm ...` line it prints.
 
-- Take it before anything overwrites the last slot that holds the stock firmware. sysupgrade, once it exists, will
-  refuse to write that slot without a confirmed backup that still matches it.
+- Take it before anything overwrites the last slot that holds the stock firmware. `./device.sh upgrade` (sysupgrade)
+  refuses to write that slot without a confirmed backup that still matches it.
 - Take it again after every boot of the stock firmware. The stock firmware changes its `mcf1` and `mcf2` partitions
   when it runs, and the check then refuses the older backup.
 - Keep the file private and keep a safe copy. It holds data specific to your unit, and the unit cannot make it again
@@ -265,9 +265,10 @@ After the reboot the restored stock firmware gets two tries; if it does not come
 slot. It comes back with the settings it had when the backup was taken (for example the SIM lock), not later ones.
 OpenWrt stays in its slot ([Booting the same OpenWrt again](#booting-the-same-openwrt-again)).
 
-What has been tried: on 2026-10-30, on one unit, a backup and a restore of the same bytes into a slot that still held
-the stock firmware worked, and the restored stock firmware booted. Going back after OpenWrt has overwritten the stock
-slot has not been tried yet.
+What has been tried, on one unit: a backup and a restore of the same bytes into a slot that still held the stock
+firmware (2026-10-30), and a restore into a slot that OpenWrt had overwritten by sysupgrade (2026-10-31). Both times
+the restored stock firmware started on the first try; the second time its modem found the SIM as before the overwrite.
+Mobile data on the restored stock firmware has not been tried.
 
 If the restore stops, see [The stock restore stops](#the-stock-restore-stops).
 
@@ -283,9 +284,44 @@ rest of the slot. The slot starts like a fresh install (a trial image arms its t
 
 ## Updating to a new build
 
-There is no in-place update. Note or back up your settings, go back to the stock firmware, then install the new
-build (steps 3 to 6). The install replaces the whole OpenWrt slot, so your OpenWrt settings and added packages are
-lost.
+From OpenWrt, with a build of this kit version or later (it has `out/$STAMP/sysupgrade.bin`):
+
+    ./device.sh upgrade root@192.168.1.1 $STAMP
+
+It uploads `sysupgrade.bin`, lets the unit check it (`sysupgrade -T`; nothing is written when that fails), records
+the request in `out/$STAMP/upgrade-request-<time>`, then runs sysupgrade. The unit stops its services, writes the build into the other slot, carries your settings over (add
+`--no-config` to start with OpenWrt's defaults instead), and reboots into the new slot. Packages you added with `apk`
+are not carried over. Allow 1 to 3 minutes, then:
+
+    ./device.sh upgrade-check root@192.168.1.1 $STAMP
+
+It compares the unit's sysupgrade record with the request (same boot, same image) and says one of: written and
+running the new slot; written but back on the old slot (the new slot crashed twice before start-up finished; also
+listed under "failed updates" in the status); refused or failed (nothing activated, the old slot stays); or unknown
+(no record of this request: for example a cold boot lost it). The record says whether the write finished; whether the
+new slot started properly is shown by it being the booted slot and marked good.
+
+- **The first update overwrites the stock firmware** (OpenWrt alternates between the two slots from then on). The
+  unit refuses this unless the stock slot has a confirmed backup that still matches it
+  ([Backing up the stock slot](#backing-up-the-stock-slot)); take a new backup right before the first update.
+- The unit also refuses while OpenWrt's own slot is not marked good (a trial image: `./device.sh trial-commit`
+  first), while a backup or a restore of the other slot runs, and for a build with modem support whose modem
+  programs do not match the modem firmware in the other slot. `-F` does not override any of these.
+- A unit running an image without sysupgrade support (built before this kit version) needs one install from the stock
+  firmware as in steps 3 to 6.
+
+### sysupgrade stopped
+
+`upgrade-check` says refused or failed: nothing was activated, the old slot is still the next boot slot, and a partly
+written new slot stays marked not good (neither `set-active` nor the LEVEL key selects it). Fix the cause shown in the
+record and run `upgrade` again. Back on the old slot with "written": the new image did not start (see above); that is
+not a sysupgrade problem.
+
+The unit does not come back and the power LED blinks red: sysupgrade could not tell for sure which slot boots next
+(the boot control bytes did not read back as written), so it stopped instead of rebooting. The network is down in
+this state. With a serial console, the console shows the step and the bytes, and a shell; check the bytes, then
+`reboot -f`. Without a serial console, unplug the power and plug it in again: the unit then boots whatever the boot
+control bytes say, which is what an automatic reboot would have done.
 
 ## When something goes wrong
 

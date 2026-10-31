@@ -77,9 +77,10 @@ The modem build is selected with `AIR6_MODEM=1` in front of `./build.sh start` (
 | File | What it is |
 | --- | --- |
 | `boot.img`, `rootfs.img` | The images for the boot and root partitions of a slot |
-| `CHECK.txt` | The image check: one line per check, ending in `RESULT: PASS` or `RESULT: FAIL`. It checks hashes, sizes, the boot image signature and device tree, the trial setting against the build options, and the files the board and the slot control need. It cannot prove that the image boots |
+| `sysupgrade.bin` | The same boot image and squashfs as one package for `./device.sh upgrade` (OpenWrt's sysupgrade), with a `CONTROL` file (sizes, hashes, trial setting, modem version, commits) and fwtool metadata |
+| `CHECK.txt` | The image check: one line per check, ending in `RESULT: PASS` or `RESULT: FAIL`. It checks hashes, sizes, the boot image signature and device tree, the trial setting against the build options, the files the board and the slot control need, and that `sysupgrade.bin` carries exactly these images. It cannot prove that the image boots |
 | `PROVENANCE` | A record of the inputs (below). It does not say that the image works or was tested |
-| `SHA256SUMS`, `PACKAGES.sha256` | Hashes of the images and of the packages |
+| `SHA256SUMS`, `PACKAGES.sha256` | Hashes of the images (with `sysupgrade.bin`) and of the packages |
 | `packages/` | The packages of this build |
 | `private/` | Your inputs as the build used them and the resolved configurations; readable by you only |
 
