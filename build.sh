@@ -17,9 +17,9 @@
 #   --local-config                    add local/diffconfig to the build configuration (not used by default)
 #   --kernel-patches                  add local/kernel-patches/*.patch to the kernel patches (not used by default)
 #   --all-kmods                       build every kernel module as a package (config/all-kmods.exclude excepted)
-#   --trial                           trial image: air6.trial=1 on the kernel command line; a new install arms a
-#                                     timer that returns to the other slot after 10 minutes unless 'air6-slot trial
-#                                     commit' runs (check 'air6-slot status' for timer=armed)
+#   --trial                           trial image: air6.trial=1 on the kernel command line; a start of a slot not
+#                                     yet committed arms a timer that returns to the other slot after 10 minutes
+#                                     unless 'air6-slot trial commit' runs (check 'air6-slot status' for timer=armed)
 # Advanced:
 #   ./build.sh start [OPTIONS] DIR [COMMIT]
 #                                     build another checkout DIR of the fork, at COMMIT (default: its HEAD)

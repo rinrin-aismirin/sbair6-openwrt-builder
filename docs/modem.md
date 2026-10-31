@@ -23,6 +23,23 @@ it. So the programs have to be copied from the stock firmware in that slot **bef
 refuses to start on such a slot. Both compare version names (from the stock root filesystem and from the slot's
 `md1img`); this does not check the modem firmware's other parts or its integrity.
 
+## Updating with the modem
+
+Updates alternate between the slots, and each slot keeps the modem firmware of the stock firmware it held (the two
+slots of the tested unit had different versions). A build with the modem must match the slot it goes into, and
+sysupgrade refuses it otherwise (no override). Before the first update, copy the programs of the stock slot as well.
+With the unit on the stock firmware, `./device.sh status root@DEVICE` shows the slot it runs from (`bootslot=a`, for
+example); name that slot:
+
+    ./build.sh pull-modem root@DEVICE a
+
+(Without a slot, `pull-modem` reads the other slot, the one an install would write.) Booting the stock firmware
+changes its slot, so take a new [stock backup](install.md#backing-up-the-stock-slot) after going back to OpenWrt.
+Later, the programs can also come from `rootfs_<slot>.img` inside the stock backup
+(`./build.sh pull-modem path/to/rootfs_a.img`; that file is the whole partition, with the settings area behind the
+squashfs, which has not been tried). Keep both versions under `local/modem/` and choose the one of the slot the update
+goes to with `AIR6_MODEM=V.._.._P..`. Updates with the modem have not been tried on a unit.
+
 ## What you need
 
 - Everything from the [README](../README.md)'s "What you need".
@@ -63,7 +80,9 @@ copied programs against the checksums `pull-modem` recorded, and lists them with
 ## 3. Install
 
 As in [install.md step 3](install.md#3-install), with the `$STAMP` from step 2. `./device.sh install` first compares the version of
-the copied programs with the modem firmware of the target slot (see above).
+the copied programs with the modem firmware of the target slot (see above). On a unit that already runs OpenWrt with
+sysupgrade support, update instead ([install.md](install.md#updating-to-a-new-build)), with the build for the modem
+version of the slot the update goes to ([Updating with the modem](#updating-with-the-modem)).
 
 ## 4. Back up the NV partitions
 

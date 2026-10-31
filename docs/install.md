@@ -1,14 +1,15 @@
 # Installing and removing OpenWrt
 
 This page walks through one install from the start: choosing what to build, building, installing, the first login,
-and later going back to the stock firmware or recovering. Read the warning at the top of the
+and later updating, going back to the stock firmware or recovering. Read the warning at the top of the
 [README](../README.md) first.
 
 ## How it works
 
 The Air 6 has two system slots, A and B. The stock firmware runs from one of them. The install writes OpenWrt into
 the other slot and tells the bootloader to try it next. The stock firmware's slot is never written, so it stays as
-the way back.
+the way back. After the first update ([Updating](#updating-to-a-new-build)) the other slot holds the previous OpenWrt
+instead; everything below that returns to "the other slot" then returns to that previous OpenWrt.
 
 When a normal image finishes starting, it marks its slot as good (`success=01` in the status; the tools call it
 "successful"), and the bootloader keeps booting it from then on. "Good" only means that start-up finished: it does
@@ -18,10 +19,10 @@ Ways out when an install goes wrong:
 
 | Situation | Way out | Ends in | Tried on one unit |
 | --- | --- | --- | --- |
-| OpenWrt crashes or hangs, and the unit resets before start-up finishes | Automatic: right after an install the bootloader gives up after two attempts (about 2 minutes each) | The stock firmware | Yes |
-| A trial image (see [step 1](#1-choose-what-to-build)) is not kept | Automatic: 10 minutes after start-up, when its return timer is armed | The stock firmware | Yes (on an earlier build) |
+| OpenWrt crashes or hangs, and the unit resets before start-up finishes | Automatic: right after an install or update the bootloader gives up after two attempts (about 2 minutes each) | The other slot (before the first update: the stock firmware) | Yes |
+| A trial image (see [step 1](#1-choose-what-to-build)) is not kept | Automatic: 10 minutes after start-up, when its return timer is armed | The other slot | Yes |
 | OpenWrt starts, but its settings make it unreachable | Failsafe mode with the WPS key ([below](#openwrt-starts-but-you-cannot-reach-it)) | The same OpenWrt, without your settings | Yes (entered; not reached from a computer) |
-| OpenWrt starts, but the build itself does not work | Hold the LEVEL key at power-on ([below](#openwrt-starts-but-you-cannot-reach-it)) | The stock firmware | Yes |
+| OpenWrt starts, but the build itself does not work | Hold the LEVEL key at power-on ([below](#openwrt-starts-but-you-cannot-reach-it)) | The other slot | Yes |
 
 There is no automatic way back for an image that hangs before start-up finishes without the unit resetting. Pulling
 the power does not count as a failed attempt, so power cycling does not bring the other slot back.
@@ -38,8 +39,8 @@ Decide these before you build; they cannot be added to an image that is already 
 
 - **Normal or trial image.** Use a trial image for a build that has not run on your unit before. A trial image is
   not marked good at the end of start-up: early in start-up it arms a timer, and unless you keep it (step 6) it
-  switches back to the stock firmware 10 minutes later and reboots. The timer is only armed when the stock
-  firmware's slot is marked good (it is after a normal stock boot). A normal image marks its slot as good as soon as
+  switches back to the other slot 10 minutes later and reboots. The timer is only armed when the other slot is
+  marked good (the stock firmware's slot is, after a normal stock boot). A normal image marks its slot as good as soon as
   it finishes starting.
 - **Your SSH key and settings.** Files under `local/files/` go into the image, for example your public key in
   `local/files/etc/dropbear/authorized_keys`. Without a key, the first login is as root with no password (OpenWrt's
@@ -141,12 +142,15 @@ The output starts like this (here OpenWrt runs from slot B):
     next=b
     slot a: prio=0e retry=00 success=01 uptype=01
     slot b: prio=0f retry=00 success=01 uptype=01
+    root=rootfs_b
     policy=normal
 
 - Normal image (`policy=normal`): the line of the slot it runs from (`booted=`) shows `success=01` once start-up has
   finished.
 - Trial image (`policy=trial`): that slot stays `success=00`, and `timer=armed, returns to slot ... in ...s` shows
   that the return timer runs. See [step 6](#6-trial-image-keep-it) for the other `timer=` values.
+- `WARNING: ...` instead of `root=rootfs_b`: the image boots another slot's root file system; it is not marked good.
+  Do not update from this state.
 
 If the unit comes back with the stock firmware instead, OpenWrt did not start (or, with a trial image, was not kept
 in time). The stock firmware and its slot are unchanged; you can try again from step 3.
@@ -180,14 +184,14 @@ Only for a trial image, and only when you want to keep it after the checks above
 or, from another computer, `ssh root@192.168.1.1 air6-slot trial commit`. The output shows `slot b committed`
 (or `slot a`). From then on the image behaves like a normal one.
 
-If you do nothing and the status shows `timer=armed`, the unit returns to the stock firmware 10 minutes after
+If you do nothing and the status shows `timer=armed`, the unit returns to the other slot 10 minutes after
 start-up (`timer=armed, due ...s ago` means the return is under way). Other `timer=` values:
 
 | Value | Meaning |
 | --- | --- |
 | `committed` | Kept; no return |
 | `cancelled` | A slot was chosen by hand (`set-active`); no return |
-| `fired` | The stock firmware's slot is already selected; a reboot follows |
+| `fired` | The other slot is already selected; a reboot follows |
 | `none`, `no-fallback`, `not-armed`, `error`, `overdue` | No return will happen by itself; keep the image or [go back by hand](#going-back-to-the-stock-firmware) |
 
 ## Optional features after the install
@@ -199,7 +203,7 @@ USB adapter driver, check it as in [docs/usb-nic.md](usb-nic.md).
 
 A normal image marks its slot as good again at every boot that finishes starting. A kept trial image does the same.
 Until a trial image is kept, the bootloader also counts its warm reboots (pulling the power does not count): right
-after an install, one more reboot starts OpenWrt again and the one after that starts the stock firmware.
+after an install or update, one more reboot starts OpenWrt again and the one after that starts the other slot.
 
 ## Settings and packages
 
@@ -211,8 +215,12 @@ Packages you add with `apk` must come from the build whose image the unit runs; 
 
 ## Going back to the stock firmware
 
-`./device.sh status root@192.168.1.1` shows which slot OpenWrt runs from (`booted=`); the stock firmware is in the
-other one. For example, with OpenWrt in slot B:
+While the other slot still holds the stock firmware (before the first update), `set-active` and a reboot start it.
+After the first update, the same commands start the previous OpenWrt build; the stock firmware then comes back only
+by [restoring the backup](#restoring-the-stock-slot-from-the-backup).
+
+`./device.sh status root@192.168.1.1` shows which slot OpenWrt runs from (`booted=`). For example, with OpenWrt in
+slot B:
 
     ./device.sh set-active root@192.168.1.1 a
     ./device.sh reboot root@192.168.1.1
@@ -284,46 +292,111 @@ rest of the slot. The slot starts like a fresh install (a trial image arms its t
 
 ## Updating to a new build
 
-From OpenWrt, with a build of this kit version or later (it has `out/$STAMP/sysupgrade.bin`):
+You need the kit computer on jack 1 and the build directory `out/$STAMP/` (the `upgrade` commands do not work from
+another computer). The build must have `out/$STAMP/sysupgrade.bin` (kits from this version on), and the unit must run
+an image with sysupgrade support: on an older image `ssh root@192.168.1.1 ls /lib/air6/upgrade.sh` fails, and the new
+build has to be installed once from the stock firmware ([going back](#going-back-to-the-stock-firmware), then steps 3
+to 6).
+
+**Before the first update:** it overwrites the stock firmware (OpenWrt alternates between the two slots from then
+on). The unit refuses unless the stock slot has a confirmed backup that still matches it: take a new backup right
+before ([Backing up the stock slot](#backing-up-the-stock-slot)) and keep the file safe.
+
+Then:
 
     ./device.sh upgrade root@192.168.1.1 $STAMP
 
-It uploads `sysupgrade.bin`, lets the unit check it (`sysupgrade -T`; nothing is written when that fails), records
-the request in `out/$STAMP/upgrade-request-<time>`, then runs sysupgrade. The unit stops its services, writes the build into the other slot, carries your settings over (add
-`--no-config` to start with OpenWrt's defaults instead), and reboots into the new slot. Packages you added with `apk`
-are not carried over. Allow 1 to 3 minutes, then:
+It uploads `sysupgrade.bin`, lets the unit check it (`sysupgrade -T`; nothing is written when that fails, and the
+output ends with "the unit refused the package (see above)" after the unit's reason), records the request in
+`out/$STAMP/upgrade-request-<time>`, then starts sysupgrade. The unit stops its services, writes the build into the
+other slot, carries your settings over, and reboots into the new slot. Allow 1 to 3 minutes.
+
+- **Settings** are what OpenWrt's sysupgrade keeps: `/etc/config`, the files listed in `/etc/sysupgrade.conf` and the
+  configuration files of packages (`ssh root@192.168.1.1 sysupgrade -l` lists them), including the SSH host keys.
+  Other files and packages you added with `apk` are not carried over.
+- **`--no-config`** (`./device.sh upgrade root@192.168.1.1 $STAMP --no-config`, the option last) does not carry the
+  current settings over: the new slot starts with the defaults built into that image. Files and uci-defaults included
+  through `local/files` still apply; where the image does not change them, that means OpenWrt's default network, new
+  SSH host keys (`ssh-keygen -R 192.168.1.1` before connecting, as in [step 4](#4-reboot-and-connect)) and no root
+  password. Not tried on a unit.
+
+The unit logs each step of the update and, at the next start-up, keeps the result in the slot that started ("last
+sysupgrade record" in `status`). A power cut before that start-up (a cold boot) loses it. Once the unit answers again
+(if `upgrade-check` cannot connect yet, wait and run it again):
 
     ./device.sh upgrade-check root@192.168.1.1 $STAMP
 
-It compares the unit's sysupgrade record with the request (same boot, same image) and says one of: written and
-running the new slot; written but back on the old slot (the new slot crashed twice before start-up finished; also
-listed under "failed updates" in the status); refused or failed (nothing activated, the old slot stays); or unknown
-(no record of this request: for example a cold boot lost it). The record says whether the write finished; whether the
-new slot started properly is shown by it being the booted slot and marked good.
+It compares the record with the request (same unit boot, same image) and the root file system with the booted slot:
 
-- **The first update overwrites the stock firmware** (OpenWrt alternates between the two slots from then on). The
-  unit refuses this unless the stock slot has a confirmed backup that still matches it
-  ([Backing up the stock slot](#backing-up-the-stock-slot)); take a new backup right before the first update.
-- The unit also refuses while OpenWrt's own slot is not marked good (a trial image: `./device.sh trial-commit`
-  first), while a backup or a restore of the other slot runs, and for a build with modem support whose modem
-  programs do not match the modem firmware in the other slot. `-F` does not override any of these.
-- A unit running an image without sysupgrade support (built before this kit version) needs one install from the stock
-  firmware as in steps 3 to 6.
+| `upgrade-check` says | Meaning | Next |
+| --- | --- | --- |
+| written, and the unit runs the new slot on its rootfs | The update finished and the new slot started | A normal image is marked good once start-up has finished (`success=01` in the status); a trial image needs `trial-commit` within 10 minutes (below) |
+| written, but the unit runs the old slot again | The write finished, and the unit is back on the old slot; why is not known from this alone (an uncommitted trial image, a switch back, or failed starts). Seeing this needs the record to survive the restarts, which has not been tried | Check `status`: "failed updates", what you did, the timer |
+| refused or failed | Nothing was activated; the old slot stays next. "refused": nothing was written. "failed": a write was started or may have been (see [sysupgrade stopped](#sysupgrade-stopped)) | Fix the cause shown in the record, then `upgrade` again |
+| anything else (MISMATCH, "not rootfs_X", incomplete) | Not an expected state | Do not run `upgrade` again; keep the output and check `status` |
+
+UNKNOWN means the result of this request is not known (no record of it on the running slot; in the two return tests
+on the unit it was UNKNOWN both times). `upgrade-check` then adds what the status shows; these lines describe the
+slots now, not the result of the request:
+
+| Line after UNKNOWN | What it shows | Next |
+| --- | --- | --- |
+| "listed under 'failed updates'" | The other slot reached the bootloader's retry limit before it was marked good. An uncommitted trial image that was rebooted twice gives the same entry, and the entry may be from an earlier attempt | Decide from what you did; `upgrade` again if you want the build |
+| "not marked good, retry .." | The other slot was selected for a boot after the write and is not marked good; whether it started, and where its record is, are not known | If you know a trial timer returned the unit: `upgrade` again and keep it in time |
+| "whether it was started is unknown" | No evidence either way | Check `status`; `upgrade` again only if the booted slot is next and `success=01` |
+| "runs slot X, not the slot the request came from" | The unit runs the other slot; which image it runs is not confirmed | Check `root=rootfs_X`, `policy=`, `timer=` and that it works; with a trial image, `trial-commit` after the checks |
+
+**With a trial image** the new slot stays `success=00` and its return timer runs from the reboot (`timer=armed` in
+the status). Check it as in step 5, then keep it within 10 minutes with `./device.sh trial-commit root@192.168.1.1`
+(step 6); otherwise the unit returns to the previous OpenWrt.
+
+Once the new slot is marked good (a normal image that finished starting, or a trial image after `trial-commit`),
+both slots hold a good OpenWrt build: `./device.sh set-active root@192.168.1.1 <other slot>` and a reboot start the
+previous build again.
+
+The unit refuses an update (nothing written; `-F` does not override any of these):
+
+- without a confirmed, still matching backup when the other slot holds the stock firmware;
+- while OpenWrt's own slot is not marked good (a trial image: `./device.sh trial-commit` first), or another slot is
+  already selected for the next boot (after `set-active` without a reboot, or a fired trial timer);
+- while a backup or a restore of the other slot runs;
+- when the root file system is not the booted slot's rootfs (`WARNING` in the status), or the other slot cannot be
+  read;
+- for a build with the modem whose modem programs do not match the modem firmware in the other slot
+  ([docs/modem.md](modem.md#updating-with-the-modem)).
+
+LuCI's "Flash new firmware image" and a manual `sysupgrade` run the same checks on the unit, but were not tried, and
+`upgrade-check` needs the request that `./device.sh upgrade` records: use `./device.sh upgrade`.
+
+## When something goes wrong
 
 ### sysupgrade stopped
 
 `upgrade-check` says refused or failed: nothing was activated, the old slot is still the next boot slot, and a partly
 written new slot stays marked not good (neither `set-active` nor the LEVEL key selects it). Fix the cause shown in the
-record and run `upgrade` again. Back on the old slot with "written": the new image did not start (see above); that is
-not a sysupgrade problem.
+record and run `upgrade` again. "refused" means nothing was written. "failed" means a write was started (or may
+have been) and the run did not finish. On the first update, the stock firmware's slot may then have changed or been
+partly overwritten: do not assume it is still usable, keep the backup, and check the phase and the read-back values in
+the record before retrying. If the record shows the invalidate step read back as requested, the slot is marked not
+good and cannot be selected. The stock firmware comes back from the backup
+([Restoring the stock slot](#restoring-the-stock-slot-from-the-backup)).
 
-The unit does not come back and the power LED blinks red: sysupgrade could not tell for sure which slot boots next
-(the boot control bytes did not read back as written), so it stopped instead of rebooting. The network is down in
-this state. With a serial console, the console shows the step and the bytes, and a shell; check the bytes, then
-`reboot -f`. Without a serial console, unplug the power and plug it in again: the unit then boots whatever the boot
-control bytes say, which is what an automatic reboot would have done.
+Back on the old slot with "written": the write finished; the reason for the return is in the status (see the
+`upgrade-check` table above), not in the record.
 
-## When something goes wrong
+The unit does not come back and the power LED blinks red: sysupgrade could not be sure which slot boots next (the
+boot control bytes did not read back as expected or could not be read), so it stopped instead of rebooting. The
+network is down in this state.
+
+- With a serial console: the console shows the step, the last bytes read, the command that prints the 10 bytes, and a
+  shell. Read the bytes as in [Technical notes](#technical-notes); `reboot -f` boots whatever they say, as a power
+  cycle would.
+- Without a serial console: unplug the power and plug it in again. The unit then boots whatever the boot control
+  bytes say, which is what an automatic reboot would have done. Allow up to 5 minutes (a new slot that does not start
+  gets two tries of about 2 minutes each), then run `./device.sh status root@192.168.1.1`. `upgrade-check` will say
+  UNKNOWN, because a power cycle loses the record. Run `upgrade` again only when the status shows the booted slot as
+  next and `success=01`. If the unit does not come back at all, only the serial console can show why. A power cycle
+  out of this state has not been tried.
 
 ### The install stops
 
@@ -368,7 +441,7 @@ interrupted, `set-active`, `stock-backup` and `restore-stock` stay refused until
 
 ### OpenWrt starts but you cannot reach it
 
-**A trial image that is not kept:** wait. If its timer was armed, it returns to the stock firmware about 10 minutes
+**A trial image that is not kept:** wait. If its timer was armed, it returns to the other slot about 10 minutes
 after start-up. Whether the timer was armed cannot be checked when you cannot reach the unit; if nothing happens
 within 15 minutes, use one of the ways below.
 
@@ -412,14 +485,16 @@ The switch and the cancel were tried on one unit; the red-LED and one-minute cas
   `0e000101000f02000100` (B preferred, retry 02, not yet successful); from slot B, `0f020001000e00010100`.
 - The install uses the stock firmware's own script (`/lib/upgrade/bootctrl.sh`, `change_slot_info`) and sets the
   new slot's retry count to 02. The bootloader increments it at every warm boot of that slot and switches to the
-  other slot when it reads 4: right after an install, OpenWrt boots twice (retry 3 and 4) and the third boot goes to
-  the stock firmware, unless a finished start-up has marked the slot good in between.
-- The same image works in either slot: the bootloader replaces `root=` on the kernel command line with the booted
-  slot's root partition. Installing into slot A (from a unit whose stock firmware runs from slot B) has not been
-  tested yet.
-- `./device.sh status root@192.168.1.1` on OpenWrt runs `air6-slot status`. It shows the same bytes per slot, whether
-  the image is a trial image, and any slot that reached the bootloader's retry limit while it was not marked good
-  (kept in `/etc/air6-slot/failed-events`; an uncommitted trial image leaves the same record).
+  other slot when it reads 4: right after an install or update, OpenWrt boots twice (retry 3 and 4) and the third
+  boot goes to the other slot, unless a finished start-up has marked the slot good in between.
+- The same image works in either slot: the bootloader replaces `root=/dev/mmcblk0p24` on the kernel command line with
+  the booted slot's root partition (p26 on slot A, p39 on slot B), and `CHECK.txt` checks that the image has this
+  value. OpenWrt in slot A has run after an update; an install into slot A from the stock firmware (a unit whose
+  stock firmware runs from slot B) has not been tried.
+- `./device.sh status root@192.168.1.1` on OpenWrt runs `air6-slot status`. It shows the same bytes per slot, the
+  root file system check, whether the image is a trial image, any slot that reached the bootloader's retry limit while
+  it was not marked good (kept in `/etc/air6-slot/failed-events`; an uncommitted trial image that is rebooted twice
+  leaves the same record) and the last sysupgrade record.
 - At the end of each start-up, OpenWrt also resets the other slot's retry count when it is above 3; otherwise the
   bootloader would refuse to switch to that slot later.
 - What the image check (`out/$STAMP/CHECK.txt`) covers: see [docs/build.md](build.md#what-a-build-leaves-behind).

@@ -1,11 +1,12 @@
 #!/bin/bash
 # Run on your computer: works on the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh"). See docs/install.md.
-#   ./device.sh status DEVICE           show the booted slot, the boot control bytes and (OpenWrt) the trial timer
+#   ./device.sh status DEVICE           show the booted slot, the boot control bytes and (OpenWrt) the trial timer,
+#                                       failed updates and the last sysupgrade record
 #   ./device.sh install DEVICE STAMP    (stock firmware) upload out/STAMP and install it into the other slot
 #   ./device.sh upgrade DEVICE STAMP [--no-config]
 #                                       (OpenWrt) sysupgrade to out/STAMP: write it into the other slot, keeping the
 #                                       settings unless --no-config, and reboot into it. Overwriting a slot that holds
-#                                       the stock firmware needs a confirmed stock-backup of it
+#                                       the stock firmware needs a confirmed stock-backup that still matches the slot
 #   ./device.sh upgrade-check DEVICE STAMP
 #                                       (OpenWrt, after the reboot) compare the unit's sysupgrade record with the last
 #                                       upgrade request for out/STAMP
@@ -138,7 +139,7 @@ stock_dir() {
 }
 
 cmd=${1:-} DEV=${2:-}
-[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,27p' "$0"; exit 2; }
+[ -n "$cmd" ] && [ -n "$DEV" ] || { sed -n '2,28p' "$0"; exit 2; }
 case "$cmd" in
 status)
 	case "$(kind)" in
@@ -217,17 +218,19 @@ upgrade-check)
 		echo "result: UNKNOWN - the unit has no record of this request. Booted slot now: $booted."
 		if [ "$booted" = "$(val from)" ] && [ "$tsucc" = 00 ]; then
 			if printf '%s\n' "$st" | grep -q " slot=$tgt .* success=00"; then
-				echo "inferred from the boot control bytes: slot $tgt is not marked good and is listed under 'failed updates'"
-				echo "(the bootloader gave up on it after failed starts). That entry may also be from an earlier attempt."
+				echo "seen in the status: slot $tgt is not marked good and is listed under 'failed updates' (it reached the"
+				echo "bootloader's retry limit before being marked good; an uncommitted trial image rebooted twice gives the"
+				echo "same entry, and the entry may be from an earlier attempt). The result of this request stays unknown."
 			elif [ "$tretry" != 00 ]; then
-				echo "inferred from the boot control bytes: slot $tgt was started (retry $tretry) but not kept (a trial image"
-				echo "not committed, a manual switch back, or a failed start); its sysupgrade record is in slot $tgt's settings."
+				echo "seen in the status: slot $tgt is not marked good, retry $tretry (it was selected for a boot after the"
+				echo "write; whether it started, and where its record is, are not known). The result of this request stays unknown."
 			else
-				echo "inferred from the boot control bytes: slot $tgt is not marked good; whether it was started is unknown."
+				echo "seen in the status: slot $tgt is not marked good; whether it was started is unknown."
 			fi
 		elif [ "$booted" != "$(val from)" ]; then
-			echo "inferred: the unit runs slot $booted, not the slot the request came from; the record was lost (a cold"
-			echo "boot?). Check the status above (root=, marked good) before relying on it."
+			echo "seen in the status: the unit runs slot $booted, not the slot the request came from. Which image it runs and"
+			echo "the result of this request are not known (no record, for example after a power cut): check root=, policy,"
+			echo "timer and that it works before relying on it."
 		fi
 		exit 1
 	fi
@@ -241,10 +244,10 @@ upgrade-check)
 			echo "(${rootc%rc=*}); the image's device tree root= is wrong. Do not upgrade again from this state."
 			exit 1
 		elif [ "$booted" != "$(val from)" ]; then
-			echo "result: written, and the unit runs the new slot $booted on rootfs_$booted (it is marked good once start-up has finished: see status)"
+			echo "result: written, and the unit runs the new slot $booted on rootfs_$booted (a normal image is marked good once start-up has finished; a trial image needs trial-commit within 10 minutes: see status)"
 		else
-			echo "result: written, but the unit runs the old slot $booted again: the new slot did not finish starting twice"
-			echo "and the bootloader returned (see 'failed updates' in the status above)"
+			echo "result: written (the write finished), but the unit runs the old slot $booted again. Why is not known"
+			echo "here: an uncommitted trial image, a switch back, or failed starts (see 'failed updates' and the status above)."
 			exit 1
 		fi ;;
 	refused|failed)
@@ -380,5 +383,5 @@ restore-stock)
 	esac
 	exit "$rc" ;;
 *)
-	sed -n '2,27p' "$0"; exit 2 ;;
+	sed -n '2,28p' "$0"; exit 2 ;;
 esac

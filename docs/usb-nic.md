@@ -30,7 +30,8 @@ build with `--local-config` (see [build options](build.md#build-options)):
     STAMP=$(./build.sh start --local-config)
 
 This also selects `r8152-firmware` (add `--trial` for a trial image). Then continue with `status` and `collect` as in
-[docs/install.md step 2](install.md#2-build), and install as in [step 3](install.md#3-install).
+[docs/install.md step 2](install.md#2-build), and install as in [step 3](install.md#3-install) (on a unit that already
+runs OpenWrt with sysupgrade support: [update](install.md#updating-to-a-new-build) instead; then check as in 2c).
 
 With only this step, the author measured about 1.4 Gbit/s from the unit and 2.2 Gbit/s to it.
 
