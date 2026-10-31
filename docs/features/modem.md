@@ -1,4 +1,4 @@
-# The 5G modem (optional, experimental)
+# The 5G/LTE modem (optional, experimental)
 
 This page explains how to build an image that can use the Air 6's built-in modem. Without these steps the image has
 no modem support, and the modem is switched off.
@@ -26,23 +26,44 @@ refuses to start on such a slot. Both compare version names (from the stock root
 ## Updating with the modem
 
 Updates alternate between the slots, and each slot keeps the modem firmware of the stock firmware it held (the two
-slots of the tested unit had different versions). A build with the modem must match the slot it goes into, and
-sysupgrade refuses it otherwise (no override). Before the first update, copy the programs of the stock slot as well.
-With the unit on the stock firmware, `./device.sh status root@DEVICE` shows the slot it runs from (`bootslot=a`, for
-example); name that slot:
+slots of the tested unit had different versions). A build with the modem must match the slot it goes into:
+sysupgrade compares the build's modem version with the version name in that slot's `md1img` and refuses a build that
+does not match (no override). Updates with the modem have not been tried on a unit.
 
-    ./build.sh pull-modem root@DEVICE a
+### Before Keep: a build for the stock slot
 
-(Without a slot, `pull-modem` reads the other slot, the one an install would write.) Booting the stock firmware
-changes its slot, so take a new [stock backup](install.md#backing-up-the-stock-slot) after going back to OpenWrt.
-Later, the programs can also come from `rootfs_<slot>.img` inside the stock backup
-(`./build.sh pull-modem path/to/rootfs_a.img`; that file is the whole partition, with the settings area behind the
-squashfs, which has not been tried). Keep both versions under `local/modem/` and choose the one of the slot the update
-goes to with `AIR6_MODEM=V.._.._P..`. Updates with the modem have not been tried on a unit.
+[Keep](../2-keep.md) (stage 2) writes OpenWrt into the stock slot, so its build must carry the modem programs of the
+stock slot's version. The build you tried in stage 1 carries those of the other slot; when the two versions differ,
+sysupgrade refuses it.
+
+1. Copy the programs of the stock slot while the stock firmware still runs, before stage 2. With the unit on the stock
+   firmware, `./device.sh status root@DEVICE` shows the slot it runs from (`bootslot=a`, for example); name that slot:
+
+       ./build.sh pull-modem root@DEVICE a
+
+   (Without a slot, `pull-modem` reads the other slot, the one an install would write.) It is easiest to run this
+   together with [step 1](#1-copy-the-modem-programs), before installing OpenWrt. If OpenWrt already runs, go back
+   to the stock firmware first ([Start the other slot](../4-going-back.md#start-the-other-slot)) and return with
+   [Boot the same OpenWrt again](../4-going-back.md#boot-the-same-openwrt-again) (a trial image must then be kept
+   again). Booting the stock firmware changes its slot, so take the
+   [stock backup](../2-keep.md#1-back-up-the-stock-slot) only after that. The programs can also come from
+   `rootfs_<slot>.img` inside a stock backup (`./build.sh pull-modem path/to/rootfs_a.img`; that file is the whole
+   partition, with the settings area behind the squashfs, which has not been tried).
+2. Build for that version as in [step 2](#2-build-with-the-modem). With two versions under `local/modem/`,
+   `AIR6_MODEM=1` is refused: name the version, for example `AIR6_MODEM=V26_4_P48`.
+3. In [step 2 of Keep](../2-keep.md#2-write-openwrt-into-the-stock-slot), use this new build: `$STAMP` is its build
+   ID, not the one of the build you tried in stage 1.
+
+When both slots have the same modem firmware version, the build you tried also matches the stock slot.
+
+### Later updates
+
+Keep both versions under `local/modem/` and build each update for the version of the slot it goes to
+(`AIR6_MODEM=V.._.._P..`): the slot the unit does not run from.
 
 ## What you need
 
-- Everything from the [README](../README.md)'s "What you need".
+- Everything from the [README](../../README.md#what-you-need)'s "What you need".
 - A SIM card that the unit accepts. The unit tested here was SIM-locked to SoftBank's networks; the lock is stored
   in the modem and is changed from the stock firmware (not described here). Its built-in eSIM held a SoftBank
   profile and did not accept other profiles (no profile manager on the chip), so other SIM cards go into the slot.
@@ -58,16 +79,16 @@ This reads the slot that does not run (the one OpenWrt will be installed into), 
 `local/modem/<version>/`, for example `local/modem/V26_4_P48/`. The command checks the files against
 `modem-files.lock` and warns about files it has not seen before.
 
-If OpenWrt is already installed in that slot, its stock firmware is gone. Use a saved copy of that slot's stock
-root filesystem instead (a squashfs image, for example from a backup of the `rootfs_a` or `rootfs_b` partition):
+If OpenWrt is already installed in that slot, its stock firmware is gone. Use `rootfs_<slot>.img` from a stock
+backup of that slot instead, as in [Before Keep](#before-keep-a-build-for-the-stock-slot) (not tried):
 
-    ./build.sh pull-modem path/to/rootfs.img
+    ./build.sh pull-modem path/to/rootfs_a.img
 
 ## 2. Build with the modem
 
-As in [step 2 of docs/install.md](install.md#2-build), with `AIR6_MODEM=1` in front of `./build.sh start`:
+As in [step 2 of docs/1-try.md](../1-try.md#2-build), with `AIR6_MODEM=1` in front of `./build.sh start`:
 
-    STAMP=$(AIR6_MODEM=1 ./build.sh start)    # add --trial for a trial image
+    STAMP=$(AIR6_MODEM=1 ./build.sh start --trial)    # leave out --trial for a normal image
     echo $STAMP
     ./build.sh status $STAMP           # repeat until the last line says "result: done"
     ./build.sh collect $STAMP          # must print "RESULT: PASS"
@@ -79,10 +100,11 @@ copied programs against the checksums `pull-modem` recorded, and lists them with
 
 ## 3. Install
 
-As in [install.md step 3](install.md#3-install), with the `$STAMP` from step 2. `./device.sh install` first compares the version of
-the copied programs with the modem firmware of the target slot (see above). On a unit that already runs OpenWrt with
-sysupgrade support, update instead ([install.md](install.md#updating-to-a-new-build)), with the build for the modem
-version of the slot the update goes to ([Updating with the modem](#updating-with-the-modem)).
+As in [step 3 of docs/1-try.md](../1-try.md#3-install), with the `$STAMP` from step 2, then reboot, connect and check
+as in its steps 4 to 6. `./device.sh install` first compares the version of the copied programs with the modem
+firmware of the target slot (see above). On a unit that already runs OpenWrt with sysupgrade support, write it with
+[Keep](../2-keep.md) (while the other slot still holds the stock firmware) or [Update](../3-update.md) instead, with
+the build for the modem version of the slot it goes to ([Updating with the modem](#updating-with-the-modem)).
 
 ## 4. Back up the NV partitions
 

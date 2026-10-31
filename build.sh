@@ -8,7 +8,7 @@
 #   ./build.sh collect ID             copy a finished build to out/ID/ and print the image check result
 #   ./build.sh logs ID                copy the logs of a build to out/logs-ID/ (for a failed build; an existing
 #                                     out/logs-ID/ is kept: remove it to copy again)
-# Optional modem support (docs/modem.md):
+# Optional modem support (docs/features/modem.md):
 #   ./build.sh pull-modem [USER@]DEVICE [SLOT] | FILE
 #                                     copy the modem userspace from a unit running the stock firmware (default:
 #                                     the slot it does not run from) or from a saved stock root filesystem image FILE

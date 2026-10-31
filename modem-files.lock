@@ -2,7 +2,7 @@
 # licence allows redistributing these files, so the kit does not carry them: `./build.sh pull-modem` reads them
 # from the owner's own unit (or a saved copy of a stock root filesystem) into local/modem/<version>/, and only
 # the owner's image gets them. The modem userspace must come from the same stock version as the modem firmware
-# in the slot OpenWrt runs from; see docs/modem.md.
+# in the slot OpenWrt runs from; see docs/features/modem.md.
 # Format: shell variables (sourced by build.sh).
 
 # Paths in the stock root filesystem (links are kept as links).

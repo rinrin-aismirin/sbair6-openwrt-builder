@@ -1,20 +1,21 @@
 # Building: customizing, options and records
 
-The first build and install are in [docs/install.md](install.md). This page is the reference for what goes into a
-build, how to change it, and what a build leaves behind.
+The first build and install are in [docs/1-try.md](1-try.md). This page is the reference for what goes into a build,
+how to change it, and what a build leaves behind.
 
 ## Build steps and failures
 
     ./build.sh start [OPTIONS]         # prints the build ID ($STAMP)
-    ./build.sh status $STAMP           # the last line says result: running, done or failed
+    ./build.sh status $STAMP           # the last line says result: running, done, failed or stopped ...
     ./build.sh collect $STAMP          # copies a finished build to out/$STAMP/ and prints the image check result
     ./build.sh logs $STAMP             # copies the logs of a build to out/logs-$STAMP/
 
 - Only one build runs at a time: a second `start` is refused while one is running.
 - A build reads this directory (including `local/`) and the fork checkout while it runs. Do not change them until
   `status` says done or failed; `PROVENANCE` records a kit input that changed during the build.
-- If `status` says `result: failed`, run `./build.sh logs $STAMP` and look at the log files in `out/logs-$STAMP/`.
-  `logs` does not replace an existing `out/logs-$STAMP/`: remove that directory to copy the logs again.
+- If `status` says `result: failed` (or `stopped without DONE or FAILED`), run `./build.sh logs $STAMP` and look at
+  the log files in `out/logs-$STAMP/`. `logs` does not replace an existing `out/logs-$STAMP/`: remove that directory
+  to copy the logs again.
 - `collect` never replaces an existing `out/$STAMP/` of another build.
 - `./build.sh` without arguments prints all commands, including building another checkout of the fork and choosing
   the Docker context or volume.
@@ -46,7 +47,7 @@ These change what is built, not only what is copied into the image. Each is used
 
 | Option | Uses | Effect |
 | --- | --- | --- |
-| `--trial` | - | A trial image; what that means: [docs/install.md](install.md#1-choose-what-to-build) |
+| `--trial` | - | A trial image; what that means: [docs/reference/boot-control.md](reference/boot-control.md#trial-images) |
 | `--local-config` | `local/diffconfig` | OpenWrt configuration lines added after the kit's own |
 | `--kernel-patches` | `local/kernel-patches/NNN-name.patch` | Patches added to the fork's kernel |
 | `--all-kmods` | `config/all-kmods.exclude` | Every kernel module built as a package |
@@ -68,7 +69,8 @@ changes the kernel itself, so it is a different build, not the same image plus p
 `CONFIG_ALL_NONSHARED` and `CONFIG_BUILDBOT` (which also select userspace packages) are refused with or without this
 option.
 
-The modem build is selected with `AIR6_MODEM=1` in front of `./build.sh start` ([docs/modem.md](modem.md)).
+The modem build is selected with `AIR6_MODEM=1` in front of `./build.sh start`
+([docs/features/modem.md](features/modem.md)).
 
 ## What a build leaves behind
 
@@ -104,8 +106,8 @@ alone does not make another build's modules safe to use.
 
 The images and packages of a build can contain your `local/files/` (keys, passwords) and files whose redistribution
 has not been cleared (see [Files from outside this repository](#files-from-outside-this-repository) and
-[docs/modem.md](modem.md)). Do not assume that any file of a build may be given to others. `PROVENANCE`
-holds no file contents from `local/`, but its paths, options and hashes can still describe your setup.
+[docs/features/modem.md](features/modem.md)). Do not assume that any file of a build may be given to others.
+`PROVENANCE` holds no file contents from `local/`, but its paths, options and hashes can still describe your setup.
 
 ## Files from outside this repository
 
@@ -127,6 +129,7 @@ holds no file contents from `local/`, but its paths, options and hashes can stil
 | Image check | `scripts/check_image.sh`, `scripts/check_sysupgrade.py`, `scripts/dtb_bootargs.py`, `scripts/resign_boot.py` | - | `out/$STAMP/CHECK.txt` |
 | Updates from OpenWrt | `device.sh upgrade`, `upgrade-check`, `build/make_sysupgrade.py` | `target/linux/mediatek/mt6990/base-files/lib/upgrade/platform.sh`; package `air6-tools`: `lib/air6/upgrade.sh` | `out/$STAMP/CHECK.txt` (sysupgrade lines), `air6-slot status` (last sysupgrade record) |
 | Install and slot switch from the stock firmware | `device.sh`, `scripts/device/` | - | `./device.sh status root@DEVICE` |
+| Stock slot backup and restore | `device.sh stock-backup`, `restore-stock` (the archive check is in `device.sh`) | package `air6-tools` (`package/utils/air6-tools/files/`): `usr/sbin/air6-stock` | the `stock-backup` output (`confirmed on the unit`); `air6-stock verify SLOT` and `air6-stock result DIR` on the unit |
 | Slot control on OpenWrt | - | package `air6-tools` (`package/utils/air6-tools/files/`): `usr/sbin/air6-slot`, `lib/air6/bootctrl.sh`, `etc/init.d/air6-slot*`, `lib/preinit/25_air6_slot_switch` | `air6-slot status`, `logread -e air6-slot` on the unit |
 | Failsafe on the Air 6 | - | package `air6-tools`: `lib/preinit/29_air6_failsafe_keys`, `31_air6_failsafe_keys`; `target/linux/mediatek/mt6990/base-files/lib/preinit/06_air6_preinit_iface` | the serial console during start-up |
-| Modem (optional, [docs/modem.md](modem.md)) | `./build.sh pull-modem`, `modem-files.lock`, `feed/` (service and LuCI packages) | `kmod-mt6990-modem`, device tree | `modem:` in `PROVENANCE`, `out/$STAMP/MODEM_FILES` |
+| Modem (optional, [docs/features/modem.md](features/modem.md)) | `./build.sh pull-modem`, `modem-files.lock`, `feed/` (service and LuCI packages) | `kmod-mt6990-modem`, device tree | `modem:` in `PROVENANCE`, `out/$STAMP/MODEM_FILES` |

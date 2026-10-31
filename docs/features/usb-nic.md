@@ -1,12 +1,12 @@
 # A USB 2.5G network adapter (optional, experimental)
 
-The Air 6 has two 1G LAN ports. Its USB 3 Type-A port can take a USB network adapter. This page covers adapters
-with a Realtek RTL8156B (2.5G), driven by `r8152`. Only one adapter has been tested (below); other chips and
+The Air 6 has two 1 Gbit/s Ethernet jacks. Its USB 3 Type-A port can take a USB network adapter. This page covers
+adapters with a Realtek RTL8156B (2.5G), driven by `r8152`. Only one adapter has been tested (below); other chips and
 adapters are not covered.
 
 > [!NOTE]
-> Over-current protection on the USB port is not ported (see the README's Status). The adapter draws its power from
-> that port.
+> Over-current protection on the USB port is not ported (see [docs/reference/status.md](../reference/status.md)). The
+> adapter draws its power from that port.
 
 ## What was tested
 
@@ -23,15 +23,16 @@ options of this page on any image other than the author's (which also had access
 ## 1. Include the driver
 
 The image has no package repository, so the driver must be in the build. Put this line in `local/diffconfig` and
-build with `--local-config` (see [build options](build.md#build-options)):
+build with `--local-config` (see [build options](../build.md#build-options)):
 
     CONFIG_PACKAGE_kmod-usb-net-rtl8152=y
 
-    STAMP=$(./build.sh start --local-config)
+    STAMP=$(./build.sh start --local-config --trial)
 
-This also selects `r8152-firmware` (add `--trial` for a trial image). Then continue with `status` and `collect` as in
-[docs/install.md step 2](install.md#2-build), and install as in [step 3](install.md#3-install) (on a unit that already
-runs OpenWrt with sysupgrade support: [update](install.md#updating-to-a-new-build) instead; then check as in 2c).
+This also selects `r8152-firmware`. `--trial` builds a trial image, as in [docs/1-try.md](../1-try.md); leave it out
+for a normal image. Then continue with `status` and `collect` as in [docs/1-try.md step 2](../1-try.md#2-build), and
+install as in [step 3](../1-try.md#3-install) (on a unit that already runs OpenWrt with sysupgrade support:
+[keep](../2-keep.md) or [update](../3-update.md) instead; then check as in 2c).
 
 With only this step, the author measured about 1.4 Gbit/s from the unit and 2.2 Gbit/s to it.
 
@@ -74,7 +75,7 @@ What these settings affect, beyond this adapter:
    `local/kernel-patches/`:
 
        mkdir -p local/kernel-patches
-       cp docs/usb-nic/798-net-usb-r8152-make-agg_buf_sz-a-module-parameter.patch local/kernel-patches/
+       cp docs/features/usb-nic/798-net-usb-r8152-make-agg_buf_sz-a-module-parameter.patch local/kernel-patches/
 
 2. The parameter, in `local/files/etc/modules.conf` (keep any lines you already have there):
 
@@ -86,16 +87,20 @@ What these settings affect, beyond this adapter:
 3. The hotplug script [usb-nic/30-r8152-tune](usb-nic/30-r8152-tune) as `local/files/etc/hotplug.d/net/30-r8152-tune`:
 
        mkdir -p local/files/etc/hotplug.d/net
-       cp docs/usb-nic/30-r8152-tune local/files/etc/hotplug.d/net/
+       cp docs/features/usb-nic/30-r8152-tune local/files/etc/hotplug.d/net/
 
-   The files must be readable by others on your computer (see [customizing the image](build.md#customizing-the-image)).
+   The files must be readable by others on your computer (see
+   [customizing the image](../build.md#customizing-the-image)).
 
 ### 2b. Build and install
 
-    STAMP=$(./build.sh start --local-config --kernel-patches)
+    STAMP=$(./build.sh start --local-config --kernel-patches --trial)
 
-Then `status`, `collect` and install as in [docs/install.md](install.md#2-build). `PROVENANCE` lists the patch under "kernel patches" and
-the build class says `modified: local-config, kernel-patches, rootfs overlay`.
+Then `status` and `collect` as in [docs/1-try.md step 2](../1-try.md#2-build), and install as in
+[step 3](../1-try.md#3-install) (on a unit that already runs OpenWrt with sysupgrade support: [keep](../2-keep.md) or
+[update](../3-update.md) instead, as in [step 1](#1-include-the-driver)); then check as in 2c. `PROVENANCE` lists
+the patch under "kernel patches" and the build class says `modified: local-config, kernel-patches, trial, rootfs
+overlay` (without `trial` for a normal image).
 
 ### 2c. Check on the unit
 

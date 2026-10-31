@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run on your computer: works on the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh"). See docs/install.md.
+# Run on your computer: works on the Air 6 over SSH (ssh command from $AIR6_SSH, default "ssh"). See README.md.
 #   ./device.sh status DEVICE           show the booted slot, the boot control bytes and (OpenWrt) the trial timer,
 #                                       failed updates and the last sysupgrade record
 #   ./device.sh install DEVICE STAMP    (stock firmware) upload out/STAMP and install it into the other slot
@@ -190,7 +190,7 @@ upgrade)
 	echo "sysupgrade request sent (request recorded in $req). Whether the unit admitted it shows in its record."
 	echo "The unit stops its services, writes slot $( [ "$slot" = a ] && echo b || echo a ) and reboots into it (1 to 3 minutes)."
 	echo "Then run: ./device.sh upgrade-check $DEV $STAMP"
-	echo "If it does not come back and the power LED blinks red, see docs/install.md (sysupgrade stopped)." ;;
+	echo "If it does not come back and the power LED blinks red, see docs/troubleshooting.md (sysupgrade stopped)." ;;
 upgrade-check)
 	stamp "${3:-}"
 	need openwrt
@@ -371,8 +371,8 @@ restore-stock)
 	fi
 	case "$rc" in
 	0)
-		echo "slot $S is the next boot slot as a trial: the restored stock gets two boots (retry 02); if it does not come"
-		echo "up, the preloader returns to slot $BOOTED"
+		echo "slot $S is the next boot slot as a trial (retry preset 02): if the restored stock does not come up after a few"
+		echo "attempts, the preloader returns to slot $BOOTED"
 		echo "next: ./device.sh reboot $DEV" ;;
 	3|4|5) echo "restore not done (rc $rc): nothing was written" >&2 ;;
 	6)

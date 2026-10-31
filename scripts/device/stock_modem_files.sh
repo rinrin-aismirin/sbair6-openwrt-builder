@@ -9,7 +9,7 @@ set -eu
 SLOT=$1; shift
 case "$SLOT" in a|b) ;; *) echo "abort: SLOT must be a or b" >&2; exit 2 ;; esac
 [ -f /lib/upgrade/bootctrl.sh ] || {
-	echo "abort: not the stock firmware; boot it first (see 'Going back to the stock firmware' in docs/install.md)" >&2
+	echo "abort: not the stock firmware; boot it first (see docs/4-going-back.md)" >&2
 	exit 1
 }
 VER_RE='MOLY[A-Z0-9_]*_V[0-9]*_[0-9]*_P[0-9]*'
